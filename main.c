@@ -1,6 +1,6 @@
 /*#########################################################
                          main.c
-    Este código utiliza a técnica SPWM para acionar as chaves de um inversor trifásico.
+    Este código utiliza a técnica SPWM para acionar as chaves de um inversor trifásico e a transformada de Clarke-Park para se obter a moduladora.
     Universidade Federal do Ceará - Engenharia Elétrica
     PIBIC 2022/2023: Desenvolvimento de uma bancada para acionamento de motores de indução trifásicos
     Bolsista: Auro Gabriel Carvalho de Aramides
