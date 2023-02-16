@@ -1,32 +1,31 @@
 /*#########################################################
                          main.c
-
-    Este cÃ³digo utiliza a tÃ©cnica SPWM para acionar as chaves de um inversor trifÃ¡sico e a transformada de Clarke-Park para se obter a moduladora.
-
+    Este c�digo faz a execu��o da bancada com leitura de velocidade de aquisicao de dados atraves de porta serial
+    Usa-se o matlab para o tratamento dos dados e leitura.
     Universidade Federal do Ceará - Engenharia Elétrica
     PIBIC 2022/2023: Desenvolvimento de uma bancada para acionamento de motores de indução trifásicos
     Bolsista: Auro Gabriel Carvalho de Aramides
-    Versão: 1.0
-    Data: 08/2022
+    Versão: 2.0
+    Data: 02/2023
     Autor: Auro Gabriel Carvalho de Aramides
 //#########################################################
 //#########################################################
                     Descrição dos pinos
-    GPIO 6   - Saída ePWM 4A
-    GPIO 7   - Saída ePWM 4B
-    GPIO 8   - Saída ePWM 5A
-    GPIO 9   - Saída ePWM 5B
-    GPIO 10  - Saída ePWM 6A
-    GPIO 11  - Saída ePWM 6B
-    GPIO 15  - Sinal de alarme, responsável por gerar uma interrupção externa quando necessário (XINT2)
-    GPIO 104 - Pino que aciona o relé que energiza a contactora que, por sua vez, energiza o circuito de potência.
+    GPIO 6   - Saida ePWM 4A
+    GPIO 7   - Saida ePWM 4B
+    GPIO 8   - Saida ePWM 5A
+    GPIO 9   - Saida ePWM 5B
+    GPIO 10  - Saida ePWM 6A
+    GPIO 11  - Saida ePWM 6B
+    GPIO 15  - Sinal de alarme, responsavel por gerar uma interrupção externa quando necessário (XINT2)
+    GPIO 104 - Pino que aciona o rele que energiza a contactora que, por sua vez, energiza o circuito de potencia.
     GPIO 105  - Pino que aciona o relé que energiza a fonte chaveada
-    GPIO 14 - 3V3 (pino usado para o opto acplador de proteção)
+    GPIO 14 - 3V3 (pino usado para o opto acplador de protecao)
     GPIO96 - eQEP1A
     GPIO97 - eQEP1B
     GPIO99 - eQEP1I
 
-
+    Comunica��o Serial - cabo usb que ja vai ligado na dsp
 //#########################################################*/
 
 #include "Solar_F.h"
@@ -39,28 +38,40 @@
 #define PORTADORA_FREQ 6000
 #define MODULADORA_FREQ 60
 #define NOS 200 //Number of Samples
-#define Mi 0.8   // �ndice de modula��o
+#define Mi 0.8   // indice de modulacao
 #define pi 3.14159265358979323846
 #define DPI 6.28318530717958647692
 #define sqrt2 1.4142135623730951
 
+/*
+ * Comunica��o Serial
+ */
+#define CPU_FREQ 200E6
+#define LSPCLK_FREQ CPU_FREQ/4
+#define SCI_FREQ 115200
+#define SCI_PRD (LSPCLK_FREQ/(SCI_FREQ*8))-1
+unsigned char i_SCI; //index para usar na SCI
+
+
 //Variáveis gerais.
 
-float32 wa=0;   //Velocidade mecânica do rotor em rad/s.
+float32 wa=0;   //Velocidade mecanica do rotor em rad/s.
 
-float w = 0; // Velocidade angular elétrica medida em rpm
+float w = 0; // Velocidade angular eletrica medida em rpm
+
+
+int malha=0;
 
 float thetak=0;
 float32 thetak_ant;
 
-unsigned int Posicao_ADC = 0; //Leitura da velocidade no módulo eqep.
-float Rotor_Posicao = 0; //Posição angular do rotor.
+unsigned int Posicao_ADC = 0; //Leitura da velocidade no modulo eqep.
+float Rotor_Posicao = 0; //Posicao angular do rotor.
 
 Uint16 AlarmCount=0;                        // Alarm Counter
-
 Uint64 index=0;
 Uint64 cont=0;
-
+Uint16 w1,w2,w3;
 Uint16 TB_Prd;
 Uint16 TB_Prescale;
 Uint16 Comando_L_D;
@@ -77,7 +88,7 @@ float32 current_phase_2=0;
 float32 current_phase_3=0;
 
 
-//################// Parametros do Motor (Transformada)#############################
+//################// Dados do Motor (Transformada)#############################
 
 
 float32 Pn  = 7.5e3;     // W, nominal power
@@ -100,18 +111,15 @@ float32 p = 2.0;                      // pares de polos -> 4polos
 
 float32 T; // =Lr/Rr
 
+
 //########################## Transformada Inversa de Clarke-Park #################################################
 
-
 float32 Va,Vb,Vc;
-float32 Vdref=0.4,Vqref=0.5,n_ref=10; // n_ref -> Velocidade de referência do campo magnético (Valores de referência da simulação)
-float32 theta=0, theta_ant=0; // ângulos do campo magnético para o integrador discreto
+float32 Vdref=0.4,Vqref=0.5,n_ref=10; // n_ref -> Velocidade de referencia do campo magnetico (Valores de referencia da simulacao)
+float32 theta=0, theta_ant=0; // angulos do campo magnetico para o integrador discreto
 
 
-
- // Leitura das medidas dos sensores
-
-
+// Leitura das medidas dos sensores
 void Setup_GPIO(void);
 void Setup_INTERRUPT(void);
 void Setup_ePWM(void);
@@ -128,6 +136,9 @@ void Setup_eQEP(void);
 
 
 
+void setup_UART(void);
+
+
 
 __interrupt void alarm_handler_isr(void);     // Alarm Handler interrupt service routine function prototype.
 __interrupt void adca_isr(void);
@@ -136,11 +147,8 @@ __interrupt void adca_isr(void);
 
 
 void main(void){
-//##########__INICIALIZA��O__#######################################################################
+//##########__INICIALIZACAO _#######################################################################
 
-    // ATEN��O: A fun��o InitPeripheralClocks() (presente dentro da fun��o InitSysCtrl()) foi modificada
-    // para habilitar apenas o clock dos perif�ricos que est�o sendo usados nesse c�digo. A saber:
-    //  TBCLKSYNC; ePWM's. Seja     consciente, economize energia :)
 
        InitSysCtrl();                          // PLL, WatchDog, enable Peripheral Clocks
        InitGpio();                             // Inicializa��o do GPIO
@@ -150,7 +158,7 @@ void main(void){
        IFR = 0x0000;
        InitPieVectTable();                     // Initialize the PIE vector table with pointers to the shell Interrupt Service Routines (ISR).
 
-//##########__CONFIGURA��ES INICIAIS__#######################################################################
+//##########__CONFIGURACOES INICIAIS__#######################################################################
     Set_ePWM_Frequency(PORTADORA_FREQ);                // Set the ePWM frequence in Hz. Min 193 hz. A frequ�ncia da portadora deve ser um m�ltiplo da moduladora.
                                                        //Para garantir um n�mero inteiro de pulsos por semiciclo. (RASHID).
 
@@ -158,7 +166,7 @@ void main(void){
     Setup_ePWM();                                      // Abre todas as chaves
     Setup_ADC();
     Setup_eQEP();
-
+    setup_UART();
 
                                                           // Configura��o das interrup��es
 
@@ -186,7 +194,7 @@ void main(void){
     EDIS;
 
     EALLOW;
-   //##########__CONFIGURA��O XINT2 (ALARME)__#######################################################################
+   //##########__CONFIGURACAO XINT2 (ALARME)__#######################################################################
         PieCtrlRegs.PIECTRL.bit.ENPIE  = 1;        // Enable the PIE block
         PieCtrlRegs.PIEIER1.bit.INTx5 = 1;        // Enable the PIE Group 1 INT 5. (XINT2)
 
@@ -194,7 +202,7 @@ void main(void){
         XintRegs.XINT2CR.bit.ENABLE   = 1;         // Enable XINT 2.
     EDIS;
 
-    //##########__CONFIGURA��O ADC_INT__#######################################################################
+    //##########__CONFIGURACAO ADC_INT__#######################################################################
       EALLOW;
 
        PieCtrlRegs.PIEIER1.bit.INTx1   = 1 ;         // Habilita o PIE para interrup��o do ADC.
@@ -213,12 +221,21 @@ void main(void){
 
     Vqref=0; // zero para poder crescer em rampa
 
+
 //##########__CODIGO__#######################################################################
     while(1)
     {
         Comando_L_D != 0 ? Liga_Bancada():Desliga_Bancada(); // Uiliza o debug em tempo real para ligar ou desligar a bancada
                                                              // Alterando o valor da vari�vel Comando_L_D na janela de express�es
                                                              // do code composer studio.
+        if(!SciaRegs.SCICTL2.bit.TXRDY){
+
+        }
+        else{
+            SciaRegs.SCITXBUF.all = 32;
+        }
+
+
 
     }
 
@@ -226,9 +243,6 @@ void main(void){
 //##########__ADCA ISR___#######################################################################
 __interrupt void adca_isr(){
 
-         if(cont==36000){
-             Vqref=0.52;
-         }
 
         // Rotina ADC com 12 KHZ (frequ�ncia de amostragem do sinal senoidal da moduladora).
 
@@ -334,6 +348,22 @@ interrupt void alarm_handler_isr(void){
 
 void Setup_GPIO(void){
 EALLOW;
+
+//############################  Comunica��o Serial  #############################
+//GPIO 42 e 43  USCI-A
+    GpioCtrlRegs.GPBGMUX1.bit.GPIO42=3;
+    GpioCtrlRegs.GPBMUX1.bit.GPIO42=3;
+    GpioCtrlRegs.GPBPUD.bit.GPIO42=1;
+    GpioCtrlRegs.GPBDIR.bit.GPIO42=1;
+    GpioCtrlRegs.GPBCSEL2.bit.GPIO42=GPIO_MUX_CPU1;
+
+    GpioCtrlRegs.GPBGMUX1.bit.GPIO43=3;
+    GpioCtrlRegs.GPBMUX1.bit.GPIO43=3;
+    GpioCtrlRegs.GPBPUD.bit.GPIO43=0;
+    GpioCtrlRegs.GPBDIR.bit.GPIO43=0;
+    GpioCtrlRegs.GPBCSEL2.bit.GPIO43=GPIO_MUX_CPU1;
+
+    GpioCtrlRegs.GPBQSEL1.bit.GPIO43=3; //Asynch Input
 
 //##############################__FONTE 3V3__##############################
 
@@ -509,6 +539,23 @@ EDIS;
 
 
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -749,6 +796,7 @@ void Liga_Bancada(void)
   }
 
 
+
 }
 
 void Desliga_Bancada(void)
@@ -955,4 +1003,31 @@ void Setup_eQEP(){
 
 
 }
+
+
+
+void setup_UART(){
+
+    //pg2279  Technical Reference
+
+    SciaRegs.SCICCR.all=0x0007;         //1 stop bit, no loopback, no parity, 8 char bits
+    //SciaRegs.SCICCR.bit.SCICHAR=0x07;   //SCI character lenght from one to eight
+
+    //async mode, idle-line protocol
+    SciaRegs.SCICTL1.all=0x0003;        //Enable TX,RX, internal SCICLK, disable RX EER, SLEEP ...
+    SciaRegs.SCICTL2.bit.TXINTENA=0;
+    SciaRegs.SCICTL2.bit.RXBKINTENA=1;
+    SciaRegs.SCIHBAUD.all=0x0000;
+    SciaRegs.SCILBAUD.all= SCI_PRD;
+
+    SciaRegs.SCIFFTX.all=0xC022; // Tamanho do Buffer das mensagens
+    SciaRegs.SCIFFRX.all=0x0028;
+
+    SciaRegs.SCIFFCT.all=0x00;
+    SciaRegs.SCICTL1.all=0x0023;    //Relinquish SCI from Reset
+    SciaRegs.SCIFFTX.bit.TXFIFORESET=1;
+    SciaRegs.SCIFFRX.bit.RXFIFORESET=1;
+
+}
+
 
