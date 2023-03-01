@@ -28,7 +28,6 @@
     Comunica��o Serial - cabo usb que ja vai ligado na dsp
 //#########################################################*/
 
-#include "Solar_F.h"
 #include "F28x_Project.h"
 #include "math.h"
 #include "stdio.h"
@@ -79,13 +78,14 @@ Uint16 aux = 0;
 Uint16 SPWM_State = 0;
 
 
-float32 Converted_Voltage_P1=0;
-float32 Converted_Voltage_P2=0;
-float32 Converted_Voltage_P3=0;
+//float32 Converted_Voltage_P1=0;
+//float32 Converted_Voltage_P2=0;
+//float32 Converted_Voltage_P3=0;
 
 float32 current_phase_1=0;
 float32 current_phase_2=0;
 float32 current_phase_3=0;
+
 
 
 //################// Dados do Motor (Transformada)#############################
@@ -108,6 +108,7 @@ float32 Lr;// = Llr+Lm;                // Indutância própria no rotor
 float32 Ls;// = Lls+Lm;                // Indutância própria no estator
 float32 p = 2.0;                      // pares de polos -> 4polos
 
+float32 Xr,Xs;
 
 float32 T; // =Lr/Rr
 
@@ -117,6 +118,17 @@ float32 T; // =Lr/Rr
 float32 Va,Vb,Vc;
 float32 Vdref=0.4,Vqref=0.5,n_ref=10; // n_ref -> Velocidade de referencia do campo magnetico (Valores de referencia da simulacao)
 float32 theta=0, theta_ant=0; // angulos do campo magnetico para o integrador discreto
+
+float freq_X;
+
+//########################## Transformada Clarke-Park #################################################
+
+float32 Va_lido,Vb_lido,Vc_lido;
+float32 Vd,Vq;
+float32 theta_mf=0, theta_mf_ant=0; // angulos do campo magnetico para o integrador discreto
+
+//#########################Aquisi��o de dados#############################
+float buffer[700];
 
 
 // Leitura das medidas dos sensores
@@ -134,16 +146,8 @@ void Set_ePWM_Frequency(uint32_t freq_pwm);
 //Função do Encoder
 void Setup_eQEP(void);
 
-
-
-void setup_UART(void);
-
-
-
 __interrupt void alarm_handler_isr(void);     // Alarm Handler interrupt service routine function prototype.
 __interrupt void adca_isr(void);
-
-
 
 
 void main(void){
@@ -166,7 +170,6 @@ void main(void){
     Setup_ePWM();                                      // Abre todas as chaves
     Setup_ADC();
     Setup_eQEP();
-    setup_UART();
 
                                                           // Configura��o das interrup��es
 
@@ -219,7 +222,7 @@ void main(void){
     Ls= Lls+Lm;
     T = __divf32(Lr,Rr);
 
-    Vqref=0; // zero para poder crescer em rampa
+    Vqref=0.0; // zero para poder crescer em rampa
 
 
 //##########__CODIGO__#######################################################################
@@ -227,15 +230,12 @@ void main(void){
     {
         Comando_L_D != 0 ? Liga_Bancada():Desliga_Bancada(); // Uiliza o debug em tempo real para ligar ou desligar a bancada
                                                              // Alterando o valor da vari�vel Comando_L_D na janela de express�es
-                                                             // do code composer studio.
-        if(!SciaRegs.SCICTL2.bit.TXRDY){
-
-        }
-        else{
-            SciaRegs.SCITXBUF.all = 32;
-        }
+                                                               // do code composer studio.
+/*
+        DacaRegs.DACVALS.all= sin(theta);
 
 
+*/
 
     }
 
@@ -244,6 +244,10 @@ void main(void){
 __interrupt void adca_isr(){
 
 
+        index++;
+        if(index>1700){
+            index=0;
+        }
         // Rotina ADC com 12 KHZ (frequ�ncia de amostragem do sinal senoidal da moduladora).
 
 
@@ -278,47 +282,84 @@ __interrupt void adca_isr(){
          Rotor_Posicao = __divf32( ((float)Posicao_ADC)*DPI , 20.0); // DoisPi/20 = Ângulo por pulso de quadratura    -->Auro: O produto desses dois dá o ângulo que já rodou
                                                           //  Posicao_ADC = Quantidade de pulsos                        # "Rotor_Posicao" é em radianos
 
-         //Partida em rampa
+
+//##################### Partida em rampa #################################################################################################
           if(SPWM_State==1){
               if(Vqref<=0.42){
-                  Vqref=Vqref+0.000001;
+                Vqref=Vqref+0.000001;
               }
               else{
                   SPWM_State++;
               }
           }
+//######################## Aquisicao de Dados ###########################################################################################
+          /*
+            if(SPWM_State==2){
+              if(cont==700){
+              }
+              if(index%100==0){
+                 cont++;
+              }
 
+              if(cont<700){
+                  buffer[cont]=(float)wa;
+              }
+          }
+          */
+//######################### Estimativa Indireta de Fluxo(malha Vel aberta) ###################################################################
 
-//######################### Estimativa Indireta de Fluxo ##################################################################################################
-
-         theta= __divf32( (__divf32(Vqref,Vdref*T) + n_ref*0.1047197551*1),200) + theta_ant; // theta é o ângulo do campo magnético. 1/12000 -> tempo de amostragem
+         theta = __divf32( (__divf32(Vqref,Vdref*T) + n_ref*0.1047197551*1),200) + theta_ant; // theta é o ângulo do campo magnético. 1/12000 -> tempo de amostragem
 
 //#################################Transformada Inversa Clarke-Park##########################################################################################
 
          Va= (float32)  (TB_Prd/2)*(1+(0.8164965819*(Vdref*__cos(theta)+ Vqref*__sin(theta))));
          Vb= (float32)  (TB_Prd/2)*(1+(0.8164965819*(Vdref*__cos(theta+2.0943951024)+ Vqref*__sin(theta+2.0943951024))));
          Vc= (float32)  (TB_Prd/2)*(1+(0.8164965819*(Vdref*__cos(theta+4.1887902048)+ Vqref*__sin(theta+4.1887902048))));
-
+         //DacbRegs.DACVALS.all=Va;
          EPwm4Regs.CMPA.bit.CMPA = Va;
          EPwm5Regs.CMPA.bit.CMPA = Vb;
          EPwm6Regs.CMPA.bit.CMPA = Vc;
 
+//#################################Leituras de Corrente e Obtencao das tensoes######################################################################################
 
 
-        // Transoforma o resultado decimal equivalente ao bin�rio da convers�o de cada fase em uma tens�o de -1,15 a 1,15 V
-        Converted_Voltage_P1 = __divf32(3.0*AdcaResultRegs.ADCRESULT0,4096.0)-1.65;
-        Converted_Voltage_P2 = __divf32(3.0*AdcbResultRegs.ADCRESULT1,4096.0)-1.65;
-        Converted_Voltage_P3 = __divf32(3.0*AdccResultRegs.ADCRESULT2,4096.0)-1.65;
+         // Transoforma o resultado decimal equivalente ao bin�rio da convers�o de cada fase em uma tens�o de -1,15 a 1,15 V
+        // Converted_Voltage_P1 = __divf32(3.0*AdcaResultRegs.ADCRESULT0,4096.0)-1.65;
+        // Converted_Voltage_P2 = __divf32(3.0*AdcbResultRegs.ADCRESULT1,4096.0)-1.65;
+        // Converted_Voltage_P3 = __divf32(3.0*AdccResultRegs.ADCRESULT2,4096.0)-1.65;
 
-        /// * Adc Voltage Range = 0 : 3.0 V
-        // * Sensor Voltage Range = 0.5 : 2.8 V
-        // * Converted_Voltage_Px Voltage Range = -1.15 : 1.15 V
+         /// * Adc Voltage Range = 0 : 3.0 V
+         // * Sensor Voltage Range = 0.5 : 2.8 V
+         // * Converted_Voltage_Px Voltage Range = -1.15 : 1.15 V
 
+         //Calcula a corrente atrav�s da tens�o pela sensibilidade do sensor : 18.4 mV / A
+          current_phase_1 =- __divf32(__divf32(3.0*AdcaResultRegs.ADCRESULT0,4096.0)-1.65,0.0184);
+          current_phase_2 = -__divf32(__divf32(3.0*AdcbResultRegs.ADCRESULT1,4096.0)-1.65 ,0.0184);
+          current_phase_3 =- __divf32( __divf32(3.0*AdccResultRegs.ADCRESULT2,4096.0)-1.65,0.0184);
 
-        //Calcula a corrente atrav�s da tens�o pela sensibilidade do sensor : 18.4 mV / A
-         current_phase_1 =- __divf32(Converted_Voltage_P1,0.0184);
-         current_phase_2 = -__divf32(Converted_Voltage_P2 ,0.0184);
-         current_phase_3 =- __divf32(Converted_Voltage_P3,0.0184);
+          //Com as 3 correntes consigo achar as 3 tens�es:
+
+         freq_X= (__divf32(Vqref,Vdref*T) + n_ref*0.1047197551*1)*10-2.557;  // Frequ�ncia da moduladora para achar a imped�ncia
+
+         Xr=DPI*freq_X*Lr;
+         Xs=DPI*freq_X*Ls;
+
+         Va_lido=Xs*current_phase_1;
+         Vb_lido=Xs*current_phase_2;
+         Vc_lido=Xs*current_phase_3;
+
+ //######################### Estimativa Indireta de Fluxo (malha Vel Fechada) ##################################################################################################
+
+          theta_mf = __divf32( (__divf32(Vqref,Vdref*T) + wa*0.1047197551),200) + theta_mf_ant; // theta é o ângulo do campo magnético. 1/12000 -> tempo de amostragem
+
+//#################################Transformada de Clarke-Park######################################################################################
+
+          Vd=0.8164965809*(Va_lido*__cos(theta_mf)+Vb_lido*__cos(theta_mf+2.0943951024)+Vc_lido*__cos(theta+4.1887902048));
+          Vq=0.8164965809*(Va_lido*__sin(theta_mf)+Vb_lido*__sin(theta_mf+2.0943951024)+Vc_lido*__cos(theta+4.1887902048));
+
+      //    DacbRegs.DACVALS.all=Vq;
+//#################################Controle da malha de Corrente(PI)######################################################################################
+
 
 
 
@@ -348,22 +389,6 @@ interrupt void alarm_handler_isr(void){
 
 void Setup_GPIO(void){
 EALLOW;
-
-//############################  Comunica��o Serial  #############################
-//GPIO 42 e 43  USCI-A
-    GpioCtrlRegs.GPBGMUX1.bit.GPIO42=3;
-    GpioCtrlRegs.GPBMUX1.bit.GPIO42=3;
-    GpioCtrlRegs.GPBPUD.bit.GPIO42=1;
-    GpioCtrlRegs.GPBDIR.bit.GPIO42=1;
-    GpioCtrlRegs.GPBCSEL2.bit.GPIO42=GPIO_MUX_CPU1;
-
-    GpioCtrlRegs.GPBGMUX1.bit.GPIO43=3;
-    GpioCtrlRegs.GPBMUX1.bit.GPIO43=3;
-    GpioCtrlRegs.GPBPUD.bit.GPIO43=0;
-    GpioCtrlRegs.GPBDIR.bit.GPIO43=0;
-    GpioCtrlRegs.GPBCSEL2.bit.GPIO43=GPIO_MUX_CPU1;
-
-    GpioCtrlRegs.GPBQSEL1.bit.GPIO43=3; //Asynch Input
 
 //##############################__FONTE 3V3__##############################
 
@@ -539,24 +564,6 @@ EDIS;
 
 
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -803,7 +810,6 @@ void Desliga_Bancada(void)
 {
 
     EALLOW;
-
     GpioDataRegs.GPBCLEAR.bit.GPIO40 = 1;  // Desliga fonte de pot�ncia
 
     DELAY_US(2000000);
@@ -1001,32 +1007,6 @@ void Setup_eQEP(){
     // Olhar o exemplo da texas citado no "title" para entender mais coisas.
     //###########################################################################
 
-
-}
-
-
-
-void setup_UART(){
-
-    //pg2279  Technical Reference
-
-    SciaRegs.SCICCR.all=0x0007;         //1 stop bit, no loopback, no parity, 8 char bits
-    //SciaRegs.SCICCR.bit.SCICHAR=0x07;   //SCI character lenght from one to eight
-
-    //async mode, idle-line protocol
-    SciaRegs.SCICTL1.all=0x0003;        //Enable TX,RX, internal SCICLK, disable RX EER, SLEEP ...
-    SciaRegs.SCICTL2.bit.TXINTENA=0;
-    SciaRegs.SCICTL2.bit.RXBKINTENA=1;
-    SciaRegs.SCIHBAUD.all=0x0000;
-    SciaRegs.SCILBAUD.all= SCI_PRD;
-
-    SciaRegs.SCIFFTX.all=0xC022; // Tamanho do Buffer das mensagens
-    SciaRegs.SCIFFRX.all=0x0028;
-
-    SciaRegs.SCIFFCT.all=0x00;
-    SciaRegs.SCICTL1.all=0x0023;    //Relinquish SCI from Reset
-    SciaRegs.SCIFFTX.bit.TXFIFORESET=1;
-    SciaRegs.SCIFFRX.bit.RXFIFORESET=1;
 
 }
 

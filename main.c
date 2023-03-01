@@ -29,7 +29,6 @@
 
 //#########################################################*/
 
-#include "Solar_F.h"
 #include "F28x_Project.h"
 #include "math.h"
 #include "stdio.h"
