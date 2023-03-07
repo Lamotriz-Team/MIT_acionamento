@@ -225,9 +225,6 @@ void main(void){
 //##########__ADCA ISR___#######################################################################
 __interrupt void adca_isr(){
 
-         if(cont==36000){
-             Vqref=0.52;
-         }
 
         // Rotina ADC com 12 KHZ (frequ�ncia de amostragem do sinal senoidal da moduladora).
 
@@ -263,7 +260,8 @@ __interrupt void adca_isr(){
          Rotor_Posicao = __divf32( ((float)Posicao_ADC)*DPI , 20.0); // DoisPi/20 = Ângulo por pulso de quadratura    -->Auro: O produto desses dois dá o ângulo que já rodou
                                                           //  Posicao_ADC = Quantidade de pulsos                        # "Rotor_Posicao" é em radianos
 
-         //Partida em rampa
+//####################### Partida em rampa ############################################################################################################
+
           if(SPWM_State==1){
               if(Vqref<=0.42){
                   Vqref=Vqref+0.000001;
@@ -272,7 +270,6 @@ __interrupt void adca_isr(){
                   SPWM_State++;
               }
           }
-
 
 //######################### Estimativa Indireta de Fluxo ##################################################################################################
 

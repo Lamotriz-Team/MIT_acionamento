@@ -17,16 +17,25 @@
     GPIO 9   - Saida ePWM 5B
     GPIO 10  - Saida ePWM 6A
     GPIO 11  - Saida ePWM 6B
+
     GPIO 15  - Sinal de alarme, responsavel por gerar uma interrupÃ§Ã£o externa quando necessÃ¡rio (XINT2)
-    GPIO 104 - Pino que aciona o rele que energiza a contactora que, por sua vez, energiza o circuito de potencia.
-    GPIO 105  - Pino que aciona o relÃ© que energiza a fonte chaveada
+
+    GPIO 40 - Pino que aciona o rele que energiza a contactora que, por sua vez, energiza o circuito de potencia.
+    GPIO 41  - Pino que aciona o relÃ© que energiza a fonte chaveada
     GPIO 14 - 3V3 (pino usado para o opto acplador de protecao)
     GPIO96 - eQEP1A
     GPIO97 - eQEP1B
     GPIO99 - eQEP1I
 
-    Comunicação Serial - cabo usb que ja vai ligado na dsp
+    GPIO122- IO para atualizar Comando liga desliga (Comando_LD) (INPUT)
+    GPIO123- IO para atualizar o valor do PWM_State (INPUT)
+
+
 //#########################################################*/
+
+//#pragma CODE_SECTION(adca_isr,".TI.ramfunc");
+//#pragma CODE_SECTION(main,".TI.ramfunc");
+//#pragma DATA_SECTION( Vqref,"SHARERAMGS0");
 
 #include "F28x_Project.h"
 #include "math.h"
@@ -49,7 +58,6 @@
 #define LSPCLK_FREQ CPU_FREQ/4
 #define SCI_FREQ 115200
 #define SCI_PRD (LSPCLK_FREQ/(SCI_FREQ*8))-1
-unsigned char i_SCI; //index para usar na SCI
 
 
 //VariÃ¡veis gerais.
@@ -73,9 +81,11 @@ Uint64 cont=0;
 Uint16 w1,w2,w3;
 Uint16 TB_Prd;
 Uint16 TB_Prescale;
-Uint16 Comando_L_D;
+Uint16 Comando_L_D=1;
 Uint16 aux = 0;
-Uint16 SPWM_State = 0;
+Uint16 SPWM_State;
+
+int Start_Mod=0;
 
 
 //float32 Converted_Voltage_P1=0;
@@ -174,7 +184,7 @@ void main(void){
                                                           // Configuraï¿½ï¿½o das interrupï¿½ï¿½es
 
     EALLOW;                                             // Endereï¿½o das rotinas de interrupï¿½ï¿½es
-        PieVectTable.ADCA1_INT = &adca_isr;
+        PieVectTable.ADCA1_INT =   &adca_isr;
         PieVectTable.XINT2_INT  =  &alarm_handler_isr;
     EDIS;
 
@@ -222,19 +232,19 @@ void main(void){
     Ls= Lls+Lm;
     T = __divf32(Lr,Rr);
 
-    Vqref=0.0; // zero para poder crescer em rampa
+    Vqref=0.10; // zero para poder crescer em rampa
 
 
 //##########__CODIGO__#######################################################################
     while(1)
     {
-        Comando_L_D != 0 ? Liga_Bancada():Desliga_Bancada(); // Uiliza o debug em tempo real para ligar ou desligar a bancada
+      //  Comando_L_D != 1 ? Liga_Bancada():Desliga_Bancada(); // Uiliza o debug em tempo real para ligar ou desligar a bancada
                                                              // Alterando o valor da variï¿½vel Comando_L_D na janela de expressï¿½es
                                                                // do code composer studio.
+        Comando_L_D=GpioDataRegs.GPDDAT.bit.GPIO123;
+        Comando_L_D!= 1 ? Liga_Bancada():Desliga_Bancada();
 /*
         DacaRegs.DACVALS.all= sin(theta);
-
-
 */
 
     }
@@ -244,10 +254,10 @@ void main(void){
 __interrupt void adca_isr(){
 
 
-        index++;
-        if(index>1700){
-            index=0;
-        }
+    index++;
+    if(index>1700){
+        index=0;
+    }
         // Rotina ADC com 12 KHZ (frequï¿½ncia de amostragem do sinal senoidal da moduladora).
 
 
@@ -276,6 +286,7 @@ __interrupt void adca_isr(){
 
         thetak_ant = thetak;
 
+
         if(thetak>=DPI ||  thetak_ant>=DPI )  thetak_ant=0;
 
         //POSIÃ‡AO ANGULAR.
@@ -284,12 +295,12 @@ __interrupt void adca_isr(){
 
 
 //##################### Partida em rampa #################################################################################################
-          if(SPWM_State==1){
+          if(Start_Mod==0 && SPWM_State==0){
               if(Vqref<=0.42){
                 Vqref=Vqref+0.000001;
               }
               else{
-                  SPWM_State++;
+                  Start_Mod++;
               }
           }
 //######################## Aquisicao de Dados ###########################################################################################
@@ -339,6 +350,7 @@ __interrupt void adca_isr(){
 
           //Com as 3 correntes consigo achar as 3 tensões:
 
+
          freq_X= (__divf32(Vqref,Vdref*T) + n_ref*0.1047197551*1)*10-2.557;  // Frequência da moduladora para achar a impedância
 
          Xr=DPI*freq_X*Lr;
@@ -369,10 +381,8 @@ __interrupt void adca_isr(){
 }
 //##########__ALARME ISR___#######################################################################
 interrupt void alarm_handler_isr(void){
-
-    //Alarme soou, codigo ficarï¿½ preso atï¿½ que o botï¿½o de "RE-DEBUG" seja pressinado no DSP.
-
-    Stop_SPWM();                                      //Para o PWM e seta as saï¿½das (Abre as chaves).
+     //Alarme soou, codigo ficarï¿½ preso atï¿½ que o botï¿½o de "RE-DEBUG" seja pressinado no DSP.
+ Stop_SPWM();                                      //Para o PWM e seta as saï¿½das (Abre as chaves).
 
     AlarmCount++;                                      // Contador do alarme
 
@@ -383,7 +393,10 @@ interrupt void alarm_handler_isr(void){
         DELAY_US(400000);
     }
 
-   PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;         // Reabilita interrupï¿½ï¿½es provenientes do alarme
+
+   //   PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;         // Reabilita interrupï¿½ï¿½es provenientes do alarme
+
+
 }
 
 
@@ -550,14 +563,28 @@ EALLOW;
 
    //Base do transistor que aciona o relï¿½ da fonte de controle.
    GpioCtrlRegs.GPBGMUX1.bit.GPIO41 = 0;
-   GpioCtrlRegs.GPBGMUX1.bit.GPIO41 = 0;
+   GpioCtrlRegs.GPBMUX1.bit.GPIO41 = 0;
    GpioCtrlRegs.GPBDIR.bit.GPIO41 = 1;
 
    //Base do transistor que aciona o relï¿½ da fonte de potï¿½ncia.
    GpioCtrlRegs.GPBGMUX1.bit.GPIO40 = 0;
-   GpioCtrlRegs.GPBGMUX1.bit.GPIO40 = 0;
+   GpioCtrlRegs.GPBMUX1.bit.GPIO40 = 0;
    GpioCtrlRegs.GPBDIR.bit.GPIO40 = 1;
 
+
+
+
+   // ( ! ) GPIO para acionar a bancada de forma 100% embarcada
+
+   //Input para o SPWM_State
+   GpioCtrlRegs.GPDGMUX2.bit.GPIO123=0;
+   GpioCtrlRegs.GPDMUX2.bit.GPIO123=0;
+   GpioCtrlRegs.GPDDIR.bit.GPIO123=0;
+
+   //Input para o comando LD
+  GpioCtrlRegs.GPDGMUX2.bit.GPIO122=0;
+  GpioCtrlRegs.GPDMUX2.bit.GPIO122=0;
+  GpioCtrlRegs.GPDDIR.bit.GPIO122=0;
 
 
 EDIS;
@@ -779,23 +806,30 @@ void Set_ePWM_Frequency(uint32_t freq_pwm){
 
 void Liga_Bancada(void)
 {
+    Comando_L_D=GpioDataRegs.GPDDAT.bit.GPIO123;
+
 
   if(aux == 0 )
   {
       EALLOW;
-
+          Vqref=0.10;
+          Start_Mod=0;
         Stop_SPWM();
-
         GpioDataRegs.GPBSET.bit.GPIO41 = 1;     // Liga fonte de controle.
         DELAY_US(2000000);
         GpioDataRegs.GPBSET.bit.GPIO40 = 1;    //Liga fonte de potï¿½ncia.
 
 
-        while(1){if(SPWM_State){break;} }       // Espera atï¿½ que SPWM_State seja diferente de zero
+        while(1){
+            SPWM_State=GpioDataRegs.GPDDAT.bit.GPIO122;
+           if(SPWM_State==0){break;}
+
+        }       // Espera atï¿½ que SPWM_State seja diferente de zero
                                                // Para liberar o PWM. Isso ï¿½ feito alterando a variï¿½vel
                                                // SPWM_Satte em tempo real atravï¿½s da aba de exprssï¿½es do DSP.
 
         Setup_GPIO();                         //Libera PWM.
+
         IER |= M_INT1;
 
         aux++;
@@ -810,15 +844,19 @@ void Desliga_Bancada(void)
 {
 
     EALLOW;
+    Comando_L_D=GpioDataRegs.GPDDAT.bit.GPIO123;
+
     GpioDataRegs.GPBCLEAR.bit.GPIO40 = 1;  // Desliga fonte de potï¿½ncia
 
     DELAY_US(2000000);
 
     GpioDataRegs.GPBCLEAR.bit.GPIO41 = 1; // Desliga fonte de controle
 
+    Stop_SPWM();
     IER &= M_INT1;
     aux = 0;
-
+    Vqref=0.10;
+    Start_Mod=0;
     EDIS;
 }
 

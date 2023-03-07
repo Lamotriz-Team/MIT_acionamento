@@ -124,7 +124,9 @@ SECTIONS
    
    SHARERAMGS0		: > RAMGS0,		PAGE = 1
    SHARERAMGS1		: > RAMGS1,		PAGE = 1
-   
+   SHARERAMGS2		: > RAMGS2,		PAGE = 1
+   SHARERAMGS3		: > RAMGS3,		PAGE = 1
+
    /* The following section definitions are required when using the IPC API Drivers */ 
     GROUP : > CPU1TOCPU2RAM, PAGE = 1 
     {
