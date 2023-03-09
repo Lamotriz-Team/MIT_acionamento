@@ -23,20 +23,20 @@ PAGE 1 :
 
    RAMLS5      : origin = 0x00A800, length = 0x000800
 
-   RAMGS0      : origin = 0x00C000, length = 0x001000
-   RAMGS1      : origin = 0x00D000, length = 0x001000
-   RAMGS2      : origin = 0x00E000, length = 0x001000
-   RAMGS3      : origin = 0x00F000, length = 0x001000
-   RAMGS4      : origin = 0x010000, length = 0x001000
-   RAMGS5      : origin = 0x011000, length = 0x001000
-   RAMGS6      : origin = 0x012000, length = 0x001000
-   RAMGS7      : origin = 0x013000, length = 0x001000
-   RAMGS8      : origin = 0x014000, length = 0x001000
-   RAMGS9      : origin = 0x015000, length = 0x001000
-   RAMGS10     : origin = 0x016000, length = 0x001000
-   RAMGS11     : origin = 0x017000, length = 0x001000
-   RAMGS12     : origin = 0x018000, length = 0x001000
-   RAMGS13     : origin = 0x019000, length = 0x001000
+   RAMGS0      : origin = 0x00C000, length = 0x00D000
+  // RAMGS1      : origin = 0x00D000, length = 0x001000
+  // RAMGS2      : origin = 0x00E000, length = 0x001000
+  // RAMGS3      : origin = 0x00F000, length = 0x001000
+  // RAMGS4      : origin = 0x010000, length = 0x001000
+  // RAMGS5      : origin = 0x011000, length = 0x001000
+  // RAMGS6      : origin = 0x012000, length = 0x001000
+  // RAMGS7      : origin = 0x013000, length = 0x001000
+  // RAMGS8      : origin = 0x014000, length = 0x001000
+  // RAMGS9      : origin = 0x015000, length = 0x001000
+   //RAMGS10     : origin = 0x016000, length = 0x001000
+  // RAMGS11     : origin = 0x017000, length = 0x001000
+  // RAMGS12     : origin = 0x018000, length = 0x001000
+  // RAMGS13     : origin = 0x019000, length = 0x001000
    RAMGS14     : origin = 0x01A000, length = 0x001000
    RAMGS15     : origin = 0x01B000, length = 0x001000
    
@@ -64,13 +64,13 @@ SECTIONS
    .reset           : > RESET,     PAGE = 0, TYPE = DSECT /* not used, */
 
    .stack           : > RAMM1,     PAGE = 1
-   .ebss            : > RAMLS5,    PAGE = 1
+   .ebss            : > RAMGS0,    PAGE = 1 //AURO: Modificado para caber vetores maiores
    .econst          : > RAMLS5,    PAGE = 1
    .esysmem         : > RAMLS5,    PAGE = 1
    Filter_RegsFile  : > RAMGS0,	   PAGE = 1
 
-   ramgs0           : > RAMGS0,    PAGE = 1
-   ramgs1           : > RAMGS1,    PAGE = 1
+   ramgs0           : > RAMGS14,    PAGE = 1
+   ramgs1           : > RAMGS15,    PAGE = 1
    
    /* The following section definitions are required when using the IPC API Drivers */ 
     GROUP : > CPU1TOCPU2RAM, PAGE = 1 

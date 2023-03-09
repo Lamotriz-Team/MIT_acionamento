@@ -28,6 +28,9 @@
 
 
 //#########################################################*/
+//#pragma CODE_SECTION(adca_isr,".TI.ramfunc");
+//#pragma CODE_SECTION(main,".TI.ramfunc");
+//#pragma DATA_SECTION( buffer,"RAMGS0");
 
 #include "F28x_Project.h"
 #include "math.h"
@@ -110,6 +113,8 @@ float32 theta=0, theta_ant=0; // ângulos do campo magnético para o integrador 
 
  // Leitura das medidas dos sensores
 
+float32 buffer[12000];
+
 
 void Setup_GPIO(void);
 void Setup_INTERRUPT(void);
@@ -151,6 +156,7 @@ void main(void){
 
 //##########__CONFIGURA��ES INICIAIS__#######################################################################
     Set_ePWM_Frequency(PORTADORA_FREQ);                // Set the ePWM frequence in Hz. Min 193 hz. A frequ�ncia da portadora deve ser um m�ltiplo da moduladora.
+
                                                        //Para garantir um n�mero inteiro de pulsos por semiciclo. (RASHID).
 
     Setup_GPIO();                                      // Configura��o dos GPIOs
@@ -210,7 +216,7 @@ void main(void){
     Ls= Lls+Lm;
     T = __divf32(Lr,Rr);
 
-    Vqref=0; // zero para poder crescer em rampa
+    Vqref=0.10; // zero para poder crescer em rampa
 
 //##########__CODIGO__#######################################################################
     while(1)
@@ -225,7 +231,12 @@ void main(void){
 //##########__ADCA ISR___#######################################################################
 __interrupt void adca_isr(){
 
-
+        if(index==12000){
+            index=0;
+        }
+        else{
+            index++;
+        }
         // Rotina ADC com 12 KHZ (frequ�ncia de amostragem do sinal senoidal da moduladora).
 
 
@@ -242,9 +253,9 @@ __interrupt void adca_isr(){
         //Posicao_ADC  = EQep1Regs.QPOSCNT;
 
         if(EQep1Regs.QEPSTS.bit.COEF == 0 && EQep1Regs.QEPSTS.bit.CDEF == 0){
-            wa = (float) __divf32(__divf32(8.0*60.0,20),__divf32(EQep1Regs.QCPRD*64.0,200.0e6));
-
-            thetak = wa *DPI* __divf32 ( __divf32( ((float) EQep1Regs.QCPRD) ,200.0e6),60) + thetak_ant;
+            wa = (float) 0.625*  __divf32(__divf32(8.0*60.0,20),__divf32(EQep1Regs.QCPRD*64.0,200.0e6));
+            buffer[index]=wa;
+            thetak =  wa *DPI* __divf32 ( __divf32( ((float) EQep1Regs.QCPRD) ,200.0e6),60) + thetak_ant;
         }
         else{
             EQep1Regs.QEPSTS.bit.COEF = 0;
@@ -760,7 +771,9 @@ void Desliga_Bancada(void)
 
     IER &= M_INT1;
     aux = 0;
-
+    SPWM_State=0;
+    Vqref=0.10;
+    index=0;
     EDIS;
 }
 
