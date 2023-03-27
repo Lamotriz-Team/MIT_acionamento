@@ -46,14 +46,16 @@
 #define DPI 6.28318530717958647692
 #define sqrt2 1.4142135623730951
 
+
+//Variáveis do encoder
+int pul_rev, freq_int;
+float n_rpm, wt_ant, wt;
+
+
+
 //Variáveis gerais.
 
-float32 wa=0;   //Velocidade mecânica do rotor em rad/s.
-
 float w = 0; // Velocidade angular elétrica medida em rpm
-
-float thetak=0;
-float32 thetak_ant;
 
 unsigned int Posicao_ADC = 0; //Leitura da velocidade no módulo eqep.
 float Rotor_Posicao = 0; //Posição angular do rotor.
@@ -61,6 +63,7 @@ float Rotor_Posicao = 0; //Posição angular do rotor.
 Uint16 AlarmCount=0;                        // Alarm Counter
 
 Uint64 index=0;
+Uint64 pos_buf=0;
 Uint64 cont=0;
 
 Uint16 TB_Prd;
@@ -113,8 +116,9 @@ float32 theta=0, theta_ant=0; // ângulos do campo magnético para o integrador 
 
  // Leitura das medidas dos sensores
 
-float32 buffer[12000];
-
+float32 buffer1[12000];
+//float32 buffer2[12000];
+//float32 buffer3[12000];
 
 void Setup_GPIO(void);
 void Setup_INTERRUPT(void);
@@ -230,32 +234,25 @@ void main(void){
 }
 //##########__ADCA ISR___#######################################################################
 __interrupt void adca_isr(){
-
-        if(index==12000){
-            index=0;
-        }
-        else{
-            index++;
-        }
         // Rotina ADC com 12 KHZ (frequ�ncia de amostragem do sinal senoidal da moduladora).
 
 
-        //Tratamento da variável theta-> Saturador + Integrador
 
-        if( theta < 0 || theta>DPI){
-         theta_ant = 0;
-        }
-       else{
-            theta_ant = theta;
-        }
+    /* ######################## Conta de Velocidade Encoder#############################
+    *   Descricao: Essa função calcula a velocidade do motor apartir dos dois metodos apresentados pelo
+    *       technical reference guide (Consultar MOP para saber mais informações).
+    *
+    *   eq1 :  n = dx/T  -> calculo da velocidade para altas velocidades
+    *   eq2 :  n = X/dt  -> calculo para baixas velocidades
+    *
+    *
+    *
+    */
+        if(EQep1Regs.QEPSTS.bit.COEF == 0 && EQep1Regs.QEPSTS.bit.CDEF == 0){ //testo os flags se ta tudo bem com eles
 
+            wt=EQep1Regs.QPOSCNT;
+            n_rpm= (wt-wt_ant)*12000;
 
-        //Posicao_ADC  = EQep1Regs.QPOSCNT;
-
-        if(EQep1Regs.QEPSTS.bit.COEF == 0 && EQep1Regs.QEPSTS.bit.CDEF == 0){
-            wa = (float) 0.625*  __divf32(__divf32(8.0*60.0,20),__divf32(EQep1Regs.QCPRD*64.0,200.0e6));
-            buffer[index]=wa;
-            thetak =  wa *DPI* __divf32 ( __divf32( ((float) EQep1Regs.QCPRD) ,200.0e6),60) + thetak_ant;
         }
         else{
             EQep1Regs.QEPSTS.bit.COEF = 0;
@@ -263,13 +260,9 @@ __interrupt void adca_isr(){
 
         }
 
-        thetak_ant = thetak;
 
-        if(thetak>=DPI ||  thetak_ant>=DPI )  thetak_ant=0;
 
-        //POSIÇAO ANGULAR.
-         Rotor_Posicao = __divf32( ((float)Posicao_ADC)*DPI , 20.0); // DoisPi/20 = Ângulo por pulso de quadratura    -->Auro: O produto desses dois dá o ângulo que já rodou
-                                                          //  Posicao_ADC = Quantidade de pulsos                        # "Rotor_Posicao" é em radianos
+
 
 //####################### Partida em rampa ############################################################################################################
 
@@ -282,6 +275,33 @@ __interrupt void adca_isr(){
               }
           }
 
+  //####################### Contadores de "tempo" ############################################################################################################
+
+        if(SPWM_State==2  ){
+
+            if(pos_buf<1000){
+                pos_buf++;
+            }
+            else{
+                pos_buf=0;
+
+            }
+
+            if(index==1000){
+                Vqref=0.52;
+            }
+
+            if(pos_buf%10==0 && index<12000){
+                index++;
+            }
+
+
+
+
+  //####################### Aquisição de Dados ############################################################################################################
+       //     buffer1[index]=wa;
+
+        }
 //######################### Estimativa Indireta de Fluxo ##################################################################################################
 
          theta= __divf32( (__divf32(Vqref,Vdref*T) + n_ref*0.1047197551*1),200) + theta_ant; // theta é o ângulo do campo magnético. 1/12000 -> tempo de amostragem
@@ -314,6 +334,13 @@ __interrupt void adca_isr(){
          current_phase_3 =- __divf32(Converted_Voltage_P3,0.0184);
 
 
+         wt_ant=wt; //faço isso para calcular o delta X
+
+         theta_ant=theta; //parte do integrador discreto
+
+         if(theta>DPI){
+             theta=0.0;
+         }
 
         AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1;    // Limpa as FLAGS provinientes do Trigger.
         PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;  //
@@ -774,6 +801,8 @@ void Desliga_Bancada(void)
     SPWM_State=0;
     Vqref=0.10;
     index=0;
+    pos_buf=0;
+    cont=0;
     EDIS;
 }
 
@@ -799,168 +828,41 @@ void Setup_eQEP(){
         //EQEP.
         InitEQep1Gpio();
 
-        GPIO_SetupPinMux(43, GPIO_MUX_CPU1, 0xF);
-        GPIO_SetupPinOptions(43, GPIO_INPUT, GPIO_PUSHPULL);
-        GPIO_SetupPinMux(42, GPIO_MUX_CPU1, 0xF);
-        GPIO_SetupPinOptions(42, GPIO_OUTPUT, GPIO_ASYNC);
+//      Comunicação Serial
+//        GPIO_SetupPinMux(43, GPIO_MUX_CPU1, 0xF);
+//        GPIO_SetupPinOptions(43, GPIO_INPUT, GPIO_PUSHPULL);
+//        GPIO_SetupPinMux(42, GPIO_MUX_CPU1, 0xF);
+//        GPIO_SetupPinOptions(42, GPIO_OUTPUT, GPIO_ASYNC);
 
 
     //Configura o EQep1:
 
-       EQep1Regs.QUPRD = 0x00000C95;  //0000 0000 1100 1001 0101;            // Unit Timer for 150Hz at 200 MHz
+ //      EQep1Regs.QUPRD = 0x2AFB85;          // Unit Timer for 71Hz at 200 MHz-> peguei aprox 100 pulsos de quadratura;
                                                 // SYSCLKOUT
-
-
-       EQep1Regs.QDECCTL.bit.QSRC = 00;      // QEP quadrature count mode
-
-
-
-
+       EQep1Regs.QPOSINIT=0;
 
 //QEPCTL -
        EQep1Regs.QEPCTL.bit.FREE_SOFT = 0x2;  //QEP Control =QEPCTL
        EQep1Regs.QEPCTL.bit.PCRM = 0x1;       // PCRM=01 -> Position counter reset on the maximum position
-
-       EQep1Regs.QEPCTL.bit.UTE = 1;        // Unit Timeout Enable
-       EQep1Regs.QEPCTL.bit.QCLM = 1;       // Latch on unit time out
-
-
-       EQep1Regs.QCAPCTL.bit.CEN = 1;       // QEP Capture Enable
        EQep1Regs.QEPCTL.bit.QPEN = 1;       //QEP enable
+       EQep1Regs.QEPCTL.bit.SEI=2;          //2h (R/W) = Initializes the position counter on rising edge of the QEPS signal
+       EQep1Regs.QEPCTL.bit.SWI=1;
 
 //QPOSCTL
 
+       EQep1Regs.QPOSMAX = 0x960;            //0x960 = 4*600  contagens de quadratura
 
-       EQep1Regs.QPOSMAX = 0x14;            //0x14 = 20 contagens de quadratura
-       EQep1Regs.QDECCTL.bit.SWAP = 0;      //troca o sentido da contagem
+       EQep1Regs.QDECCTL.bit.QSRC = 0;     // QEP quadrature count mode
+       EQep1Regs.QDECCTL.bit.SWAP = 1;      //troca o sentido da contagem
 
-       EQep1Regs.QCAPCTL.bit.UPPS = 3;      // 1/8 for unit position
-       EQep1Regs.QCAPCTL.bit.CCPS = 6;      // 1/64 for CAP clock
+       EQep1Regs.QCAPCTL.bit.CEN = 1;       // QEP Capture Enable
+       EQep1Regs.QCAPCTL.bit.CCPS = 0;      // 1/64 for CAP clock
+       EQep1Regs.QCAPCTL.bit.UPPS = 0;      // 1/8 for unit position
 
 
        //EQep1Regs.QEINT.bit.UTO = 1;       // 400 Hz interrupt for speed estimation
        EDIS;
 
-    //################## Auro: Mudei os valores para o que a gente usa ############
-    //
-    // EXTRACTED FROM FILE:    Example_posspeed.c
-    //
-    // TITLE:   Pos/speed measurement using EQEP peripheral
-    //
-    // DESCRIPTION:
-    //
-    // This file includes the EQEP initialization and position and speed
-    // calculation functions called by Eqep_posspeed.c.  The position and speed
-    // calculation steps performed by POSSPEED_Calc() at  SYSCLKOUT =  200 MHz are
-    // described below:
-
-    //#############################################################################
-    //  ###### Encoder de 5 pulsos por volta -> 20 de quadratura #################
-    //#############################################################################
-
-    // 1. This program calculates: **theta_mech**
-    //
-    //    theta_mech = QPOSCNT/mech_Scaler = QPOSCNT/20, where 20 is the number
-    //                 of counts in 1 revolution.
-
-
-    //                (20/4 = 5 line/rev. quadrature encoder)
-    //
-
-    // 2. This program calculates: **theta_elec**
-    //
-    //    theta_elec = (# pole pairs) * theta_mech = 2*QPOSCNT/20
-    //
-
-
-    // 3. This program calculates: **SpeedRpm_fr**
-    //
-    //    SpeedRpm_fr = [(x2-x1)/20]/T   - Equation 1
-
-    //    Note (x2-x1) = difference in number of QPOSCNT counts. Dividing (x2-x1)
-    //    by 20 gives position relative to Index in one revolution.
-
-
-    // If base RPM  = 1800 rpm:   1800 rpm = [(x2-x1)/20]/10ms   - Equation 2
-
-    //                                     = [(x2-x1)/20]/(.01s*1 min/60 sec)
-    //                                     = [(x2-x1)/20]/(1/6000) min  - Equation 2
-
-    //                         max (x2-x1) = 20 counts, or 1 revolution in 10 ms
-
-
-    // If both sides of Equation 2 are divided by 1800 rpm, then:
-    //                   1 = [(x2-x1)/20] rev./[(1/6000) min * 1800rpm]
-
-    //                   Because (x2-x1) must be <20 (max) for QPOSCNT increment,
-    //                   (x2-x1)/20 < 1 for CW rotation
-
-    //                   And because (x2-x1) must be >-20 for QPOSCNT decrement,
-    //                   (x2-x1)/1800>-1  for CCW rotation (CCW= Counter Clockwise)
-
-    //                   speed_fr = [(x2-x1)/20]/[(1/6000) min * 1800rpm]
-    //                            = (x2-x1)/2     - Equation 3
-
-
-    // To convert speed_fr to RPM, multiply Equation 3 by 1800 rpm
-    //                   SpeedRpm_fr = 1800rpm *(x2-x1)/2  - Final Equation
-
-
-
-    // 2. **min rpm ** = selected at 10 rpm based on [CCPS] prescaler options
-    //    available (128 is greatest)
-
-
-    // 3. **SpeedRpm_pr**
-
-    //    SpeedRpm_pr = X/(t2-t1)  - Equation 4
-
-    //    where X = QCAPCTL [UPPS]/20 rev. (position relative to Index in
-    //                                        1 revolution)
-    // If  max/base speed = 1800 rpm:
-    //               1800 = (8/20)/[(t2-t1)/(200MHz/64)]
-
-    //          where 8 = QCAPCTL [UPPS] (Unit timeout - once every 8 edges)
-    //          where 64 = QCAPCTL [CCPS]
-
-    //            8/20 = position in 1 revolution (position as a fraction
-    //                                                of 1 revolution)
-
-    //   t2-t1/(200MHz/64), t2-t1= # of QCAPCLK cycles, and
-    //      QCAPCLK cycle = 1/(200MHz/64)
-//////                    = QCPRDLAT   #################################################
-
-
-    // So:       1800 rpm = [UPPS(200MHz/CCPS)*60s/min]/[20(t2-t1)]
-    //
-
-    //           1800 rpm = [8*(200MHz/64)*60s/min]/[20(t2-t1)]
-    //           t2-t1 = [8*(200MHz/64)*60s/min]/(20*1800rpm)  - Equation 5
-    //                    ~= 416.66 CAPCLK cycles = maximum (t2-t1) = SpeedScaler
-       //                   52.0825
-    //
-    // Divide both sides by (t2-t1), and:
-    //            1 = 32/(t2-t1) = [8(200MHz/64)*60 s/min]/(20*1800rpm)]/(t2-t1)
-
-    //       Because (t2-t1) must be < 416.66 for QPOSCNT increment:
-    //               416.66/(t2-t1) < 1 for CW rotation
-    //       And because (t2-t1) must be >-416.66 for QPOSCNT decrement:
-    //                416.66/(t2-t1)> -1 for CCW rotation
-    //
-    //       eed_pr = 416.66/(t2-t1)
-    //             or [8(200MHz/64)*60 s/min]/(20*1800rpm)]/(t2-t1) - Equation 6
-    //
-    // To convert speed_pr to RPM:
-    // Multiply Equation 6 by 1800rpm:
-    // SpeedRpm_fr  = 1800rpm * [8*(200MHz/64)*60 s/min]/[20*1800rpm*(t2-t1)]
-    //              = [8(200MHz/64)*60 s/min]/[20*(t2-t1)]
-    //              or [(8/20)rev * 60 s/min]/[(t2-t1)(QCPRDLAT)]-Final Equation
-    //
-    // More detailed calculation results can be found in the Example_freqcal.xls
-    // spreadsheet included in the example folder.
-    //
-    // Olhar o exemplo da texas citado no "title" para entender mais coisas.
-    //###########################################################################
 
 
 }
