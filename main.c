@@ -33,10 +33,9 @@
 //#pragma DATA_SECTION( buffer,"RAMGS0");
 
 #include "F28x_Project.h"
-#include "math.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
+#include "CONTROLE_DEFS.h"
+
+
 
 #define PORTADORA_FREQ 6000
 #define MODULADORA_FREQ 60
@@ -50,8 +49,7 @@
 //Variáveis do encoder
 int pul_rev, freq_int;
 float n_rpm, wt_ant, wt;
-
-
+float wa;
 
 //Variáveis gerais.
 
@@ -59,6 +57,12 @@ float w = 0; // Velocidade angular elétrica medida em rpm
 
 unsigned int Posicao_ADC = 0; //Leitura da velocidade no módulo eqep.
 float Rotor_Posicao = 0; //Posição angular do rotor.
+float rpm = 0;
+float rpm_ref = 1200.0;
+
+unsigned long delta_pos = 0;
+unsigned int new_pos = 0, old_pos = 0;
+
 
 Uint16 AlarmCount=0;                        // Alarm Counter
 
@@ -134,7 +138,7 @@ void Set_ePWM_Frequency(uint32_t freq_pwm);
 //Função do Encoder
 void Setup_eQEP(void);
 
-
+void Calc_RPM(void);
 
 
 __interrupt void alarm_handler_isr(void);     // Alarm Handler interrupt service routine function prototype.
@@ -142,12 +146,11 @@ __interrupt void adca_isr(void);
 
 
 
-
 void main(void){
 //##########__INICIALIZA��O__#######################################################################
 
     // ATEN��O: A fun��o InitPeripheralClocks() (presente dentro da fun��o InitSysCtrl()) foi modificada
-    // para habilitar apenas o clock dos perif�ricos que est�o sendo usados nesse c�digo. A saber:
+    //  para habilitar apenas o clock dos perif�ricos que est�o sendo usados nesse c�digo. A saber:
     //  TBCLKSYNC; ePWM's. Seja     consciente, economize energia :)
 
        InitSysCtrl();                          // PLL, WatchDog, enable Peripheral Clocks
@@ -167,7 +170,6 @@ void main(void){
     Setup_ePWM();                                      // Abre todas as chaves
     Setup_ADC();
     Setup_eQEP();
-
 
                                                           // Configura��o das interrup��es
 
@@ -221,48 +223,27 @@ void main(void){
     T = __divf32(Lr,Rr);
 
     Vqref=0.10; // zero para poder crescer em rampa
+    //##########__CONFIGURACAO I2C__#######################################################################
 
-//##########__CODIGO__#######################################################################
+    I2cAGpioConfig(I2C_A_GPIO0_GPIO1); //Configuro os MUX para ler o gpio 0 e 1
+
+    //##########__CODIGO__#######################################################################
     while(1)
     {
         Comando_L_D != 0 ? Liga_Bancada():Desliga_Bancada(); // Uiliza o debug em tempo real para ligar ou desligar a bancada
                                                              // Alterando o valor da vari�vel Comando_L_D na janela de express�es
                                                              // do code composer studio.
 
+
     }
 
 }
 //##########__ADCA ISR___#######################################################################
 __interrupt void adca_isr(){
-        // Rotina ADC com 12 KHZ (frequ�ncia de amostragem do sinal senoidal da moduladora).
+    DINT;
+    // Rotina ADC com 12 KHZ (frequ�ncia de amostragem do sinal senoidal da moduladora).
 
-
-
-    /* ######################## Conta de Velocidade Encoder#############################
-    *   Descricao: Essa função calcula a velocidade do motor apartir dos dois metodos apresentados pelo
-    *       technical reference guide (Consultar MOP para saber mais informações).
-    *
-    *   eq1 :  n = dx/T  -> calculo da velocidade para altas velocidades
-    *   eq2 :  n = X/dt  -> calculo para baixas velocidades
-    *
-    *
-    *
-    */
-        if(EQep1Regs.QEPSTS.bit.COEF == 0 && EQep1Regs.QEPSTS.bit.CDEF == 0){ //testo os flags se ta tudo bem com eles
-
-            wt=EQep1Regs.QPOSCNT;
-            n_rpm= (wt-wt_ant)*12000;
-
-        }
-        else{
-            EQep1Regs.QEPSTS.bit.COEF = 0;
-            EQep1Regs.QEPSTS.bit.CDEF = 0;
-
-        }
-
-
-
-
+        Calc_RPM();
 
 //####################### Partida em rampa ############################################################################################################
 
@@ -277,18 +258,18 @@ __interrupt void adca_isr(){
 
   //####################### Contadores de "tempo" ############################################################################################################
 
-        if(SPWM_State==2  ){
+       if(SPWM_State==2  ){
 
-            if(pos_buf<1000){
+           if(pos_buf<1000){
                 pos_buf++;
             }
-            else{
+           else{
                 pos_buf=0;
 
             }
 
             if(index==1000){
-                Vqref=0.52;
+                Vqref=0.42;
             }
 
             if(pos_buf%10==0 && index<12000){
@@ -299,7 +280,7 @@ __interrupt void adca_isr(){
 
 
   //####################### Aquisição de Dados ############################################################################################################
-       //     buffer1[index]=wa;
+           // buffer1[index]=n_rpm;
 
         }
 //######################### Estimativa Indireta de Fluxo ##################################################################################################
@@ -334,18 +315,22 @@ __interrupt void adca_isr(){
          current_phase_3 =- __divf32(Converted_Voltage_P3,0.0184);
 
 
-         wt_ant=wt; //faço isso para calcular o delta X
+        // wt_ant=wt; //faço isso para calcular o delta X
 
          theta_ant=theta; //parte do integrador discreto
 
          if(theta>DPI){
              theta=0.0;
+             delta_pos=0;
          }
+
 
         AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1;    // Limpa as FLAGS provinientes do Trigger.
         PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;  //
-
+        EINT;
 }
+
+
 //##########__ALARME ISR___#######################################################################
 interrupt void alarm_handler_isr(void){
 
@@ -362,7 +347,7 @@ interrupt void alarm_handler_isr(void){
         DELAY_US(400000);
     }
 
-   PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;         // Reabilita interrup��es provenientes do alarme
+ //  PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;         // Reabilita interrup��es provenientes do alarme
 }
 
 
@@ -822,24 +807,57 @@ void Stop_SPWM(void){
 
 void Setup_eQEP(){
 
-    EALLOW;
-
-
-        //EQEP.
+    //EQEP.
         InitEQep1Gpio();
 
-//      Comunicação Serial
-//        GPIO_SetupPinMux(43, GPIO_MUX_CPU1, 0xF);
-//        GPIO_SetupPinOptions(43, GPIO_INPUT, GPIO_PUSHPULL);
-//        GPIO_SetupPinMux(42, GPIO_MUX_CPU1, 0xF);
-//        GPIO_SetupPinOptions(42, GPIO_OUTPUT, GPIO_ASYNC);
+        EALLOW;
+           EQep1Regs.QUPRD = 0x2000000;            // Unit Timer for 100Hz at 200 MHz
+                                                     // SYSCLKOUT
+           EQep1Regs.QDECCTL.bit.QSRC = 01;      // QEP quadrature count mode
+           EQep1Regs.QEPCTL.bit.FREE_SOFT = 2;
+           EQep1Regs.QEPCTL.bit.PCRM = 1;         // PCRM=01 mode - QPOSCNT reset on maximum position
+           EQep1Regs.QEPCTL.bit.UTE = 1;         // Unit Timeout Enable
+           EQep1Regs.QEPCTL.bit.QCLM = 1;        // Latch on unit time out
+           EQep1Regs.QPOSMAX = 0xFFFF;
+           EQep1Regs.QDECCTL.bit.SWAP = 1;         // troca o sentido da contagem
+           EQep1Regs.QEPCTL.bit.QPEN = 1;        // QEP enable
+
+           EQep1Regs.QCAPCTL.bit.UPPS = 1;       // 1/1 for unit position
+           EQep1Regs.QCAPCTL.bit.CCPS = 3;       // 1/8 for CAP clock
+           EQep1Regs.QCAPCTL.bit.CEN = 1;        // QEP Capture Enable
+           //EQep1Regs.QEINT.bit.UTO = 1;       // 400 Hz interrupt for speed estimation
+           EDIS;
 
 
+}
+
+
+void Calc_RPM(void){
+    if(EQep1Regs.QFLG.bit.UTO){             // Unit Timeout event
+        new_pos = EQep1Regs.QPOSLAT;        // Latched POSCNT value
+        delta_pos = (new_pos > old_pos) ? (new_pos - old_pos) : ((0xFFFFFFFF - old_pos) + new_pos);
+        old_pos = new_pos;
+        EQep1Regs.QCLR.bit.UTO = 1;
+    }
+    rpm = ((float)(delta_pos)) * 0.3 * 60;
+
+    wa = (1.0*60.0/2048.0)/(EQep1Regs.QCPRD*8.0/200.0e6);
+    //wa = (32.0*60.0/2048.0)/(EQep1Regs.QCPRD*6.4e-7);
+
+       if(EQep1Regs.QEPSTS.bit.COEF == 0 && EQep1Regs.QEPSTS.bit.CDEF == 0){
+           wa = (32.0*60.0/9150.0)/(EQep1Regs.QCPRD*64.0/200.0e6);
+       }else{
+           EQep1Regs.QEPSTS.bit.COEF = 0;
+           EQep1Regs.QEPSTS.bit.CDEF = 0;
+       }
+}
+
+/*
     //Configura o EQep1:
 
- //      EQep1Regs.QUPRD = 0x2AFB85;          // Unit Timer for 71Hz at 200 MHz-> peguei aprox 100 pulsos de quadratura;
+    //   EQep1Regs.QUPRD = 0x2AFB85;          // Unit Timer for 71Hz at 200 MHz-> peguei aprox 100 pulsos de quadratura;
                                                 // SYSCLKOUT
-       EQep1Regs.QPOSINIT=0;
+       EQep1Regs.QPOSINIT=0x9;
 
 //QEPCTL -
        EQep1Regs.QEPCTL.bit.FREE_SOFT = 0x2;  //QEP Control =QEPCTL
@@ -849,21 +867,17 @@ void Setup_eQEP(){
        EQep1Regs.QEPCTL.bit.SWI=1;
 
 //QPOSCTL
+       EQep1Regs.QPOSMAX = 0x7D0;            //0x960 = 4*600  contagens de quadratura
 
-       EQep1Regs.QPOSMAX = 0x960;            //0x960 = 4*600  contagens de quadratura
-
-       EQep1Regs.QDECCTL.bit.QSRC = 0;     // QEP quadrature count mode
-       EQep1Regs.QDECCTL.bit.SWAP = 1;      //troca o sentido da contagem
+       EQep1Regs.QDECCTL.bit.QSRC = 1;      //Direction-count mode (QCLK = xCLK, QDIR = xDIR)
+       EQep1Regs.QDECCTL.bit.SWAP = 0;      //
 
        EQep1Regs.QCAPCTL.bit.CEN = 1;       // QEP Capture Enable
-       EQep1Regs.QCAPCTL.bit.CCPS = 0;      // 1/64 for CAP clock
-       EQep1Regs.QCAPCTL.bit.UPPS = 0;      // 1/8 for unit position
+       EQep1Regs.QCAPCTL.bit.CCPS = 0x0;      // 1/64 for CAP clock
+       EQep1Regs.QCAPCTL.bit.UPPS = 0x2;      // 1/8 for unit position
 
 
        //EQep1Regs.QEINT.bit.UTO = 1;       // 400 Hz interrupt for speed estimation
-       EDIS;
-
-
-
-}
-
+         EDIS;
+ *
+ */
