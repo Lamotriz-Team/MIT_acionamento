@@ -10,6 +10,7 @@ GEN_OPTS__FLAG :=
 GEN_CMDS__FLAG := 
 
 ORDERED_OBJS += \
+"./Control_DEFS.obj" \
 "./F2837xD_Adc.obj" \
 "./F2837xD_CodeStartBranch.obj" \
 "./F2837xD_CpuTimers.obj" \
@@ -18,6 +19,7 @@ ORDERED_OBJS += \
 "./F2837xD_EQep.obj" \
 "./F2837xD_GlobalVariableDefs.obj" \
 "./F2837xD_Gpio.obj" \
+"./F2837xD_I2C.obj" \
 "./F2837xD_PieCtrl.obj" \
 "./F2837xD_PieVect.obj" \
 "./F2837xD_Sci.obj" \
@@ -25,7 +27,7 @@ ORDERED_OBJS += \
 "./F2837xD_sci_io.obj" \
 "./F2837xD_usDelay.obj" \
 "./aq_dados.obj" \
-"../2837x_FLASH_lnk_cpu1.cmd" \
+"../2837x_RAM_lnk_cpu1.cmd" \
 "../F2837xD_Headers_nonBIOS_cpu1.cmd" \
 $(GEN_CMDS__FLAG) \
 -llibc.a \
@@ -156,8 +158,8 @@ motoracionamento__2.out: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
 # Other Targets
 clean:
 	-$(RM) $(EXE_OUTPUTS__QUOTED)
-	-$(RM) "F2837xD_Adc.obj" "F2837xD_CodeStartBranch.obj" "F2837xD_CpuTimers.obj" "F2837xD_DefaultISR.obj" "F2837xD_EPwm.obj" "F2837xD_EQep.obj" "F2837xD_GlobalVariableDefs.obj" "F2837xD_Gpio.obj" "F2837xD_PieCtrl.obj" "F2837xD_PieVect.obj" "F2837xD_Sci.obj" "F2837xD_SysCtrl.obj" "F2837xD_sci_io.obj" "F2837xD_usDelay.obj" "aq_dados.obj" 
-	-$(RM) "F2837xD_Adc.d" "F2837xD_CpuTimers.d" "F2837xD_DefaultISR.d" "F2837xD_EPwm.d" "F2837xD_EQep.d" "F2837xD_GlobalVariableDefs.d" "F2837xD_Gpio.d" "F2837xD_PieCtrl.d" "F2837xD_PieVect.d" "F2837xD_Sci.d" "F2837xD_SysCtrl.d" "F2837xD_sci_io.d" "aq_dados.d" 
+	-$(RM) "Control_DEFS.obj" "F2837xD_Adc.obj" "F2837xD_CodeStartBranch.obj" "F2837xD_CpuTimers.obj" "F2837xD_DefaultISR.obj" "F2837xD_EPwm.obj" "F2837xD_EQep.obj" "F2837xD_GlobalVariableDefs.obj" "F2837xD_Gpio.obj" "F2837xD_I2C.obj" "F2837xD_PieCtrl.obj" "F2837xD_PieVect.obj" "F2837xD_Sci.obj" "F2837xD_SysCtrl.obj" "F2837xD_sci_io.obj" "F2837xD_usDelay.obj" "aq_dados.obj" 
+	-$(RM) "Control_DEFS.d" "F2837xD_Adc.d" "F2837xD_CpuTimers.d" "F2837xD_DefaultISR.d" "F2837xD_EPwm.d" "F2837xD_EQep.d" "F2837xD_GlobalVariableDefs.d" "F2837xD_Gpio.d" "F2837xD_I2C.d" "F2837xD_PieCtrl.d" "F2837xD_PieVect.d" "F2837xD_Sci.d" "F2837xD_SysCtrl.d" "F2837xD_sci_io.d" "aq_dados.d" 
 	-$(RM) "F2837xD_CodeStartBranch.d" "F2837xD_usDelay.d" 
 	-@echo 'Finished clean'
 	-@echo ' '

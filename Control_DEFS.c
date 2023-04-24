@@ -15,8 +15,8 @@ void i2c_DspConfig(void){
         I2caRegs.I2CMDR.bit.IRS=0;        //Deixo o módulo desligado pra poder mudar os valores
         I2caRegs.I2CPSC.bit.IPSC=128   ; // 200M/128= 1 562 500 Hz
 
-        I2caRegs.I2CCLKH=4;       // divido pra dar a frequência de 390.625 KHz -> No datasheet fala que aguenta 400KHz, então fé
-        I2caRegs.I2CCLKL=4;
+        I2caRegs.I2CCLKH=16;       // divido pra dar a frequência de 98.16KHz -> No datasheet fala que o padrao e 100KHz, entao fe
+        I2caRegs.I2CCLKL=16;
         I2caRegs.I2CMDR.bit.IRS=1; //Ligo o modulo que agora aceita os valores de prescale
 
         //##########__CONFIGURACAO Modo do I2C__#######################################################################
@@ -25,7 +25,7 @@ void i2c_DspConfig(void){
 
         I2caRegs.I2CMDR.bit.FREE=1;   // Free= 1  The I2C module runs free that is, it continues to operate when a breakpoint occurs.
 
-        //START
+        //START MASTER MODE
         I2caRegs.I2CMDR.bit.STT=0;     // STT=0    In the master mode, STT is automatically cleared after the START condition has been generated.
         //STOP
         I2caRegs.I2CMDR.bit.STP=0;     // Note that the STT and STP bits can be used to terminate the repeat mode, and that this bit is not writable when IRS=0
@@ -35,7 +35,7 @@ void i2c_DspConfig(void){
                                           // 1h (R/W) = Master mode. The I2C module is a master and generates the serial clock on the SCL pin
 
 
-        I2caRegs.I2CMDR.bit.TRX=1       // TRX=1  Transmitter mode. When relevant, TRX selects whether the I2C module is in the transmitter mode or the receiver mode.
+        I2caRegs.I2CMDR.bit.TRX=1;       // TRX=1  Transmitter mode. When relevant, TRX selects whether the I2C module is in the transmitter mode or the receiver mode.
 
         I2caRegs.I2CMDR.bit.XA=0;          // Expanded address enable bit.
                                         // 0h (R/W) = 7-bit addressing mode (normal address mode). The I2C  module transmits 7-bit slave addresses (from bits 6-0 of I2CSAR),
@@ -45,7 +45,13 @@ void i2c_DspConfig(void){
 
         I2caRegs.I2CMDR.bit.DLB=0;     // 0H= DISABLE - Digital loopback mode bit.
 
-        I2caRegs.I2CMDR.bit.
+        // START THE MODULE
+        I2caRegs.I2CMDR.bit.STB=1;     //1h (R/W) = The I2C module is in the START byte mode. When you set the START condition bit (STT),
+                                        //the I2C module begins the transfer with more than just a START condition.
+       I2caRegs.I2CMDR.bit.FDF=0;      // 0h (R/W) = Free data format mode is disabled. Transfers use the
+                                       //7-/10-bit addressing format selected by the XA bit.
+
+        I2caRegs.I2CMDR.bit.BC=0;   //0h (R/W) = 8 bits per data byte. Bit count bits.
 
 }
 

@@ -1,3 +1,4 @@
+"./Control_DEFS.obj"
 "./F2837xD_Adc.obj"
 "./F2837xD_CodeStartBranch.obj"
 "./F2837xD_CpuTimers.obj"
@@ -6,6 +7,7 @@
 "./F2837xD_EQep.obj"
 "./F2837xD_GlobalVariableDefs.obj"
 "./F2837xD_Gpio.obj"
+"./F2837xD_I2C.obj"
 "./F2837xD_PieCtrl.obj"
 "./F2837xD_PieVect.obj"
 "./F2837xD_Sci.obj"
@@ -13,6 +15,6 @@
 "./F2837xD_sci_io.obj"
 "./F2837xD_usDelay.obj"
 "./aq_dados.obj"
-"../2837x_FLASH_lnk_cpu1.cmd"
+"../2837x_RAM_lnk_cpu1.cmd"
 "../F2837xD_Headers_nonBIOS_cpu1.cmd"
 -llibc.a
