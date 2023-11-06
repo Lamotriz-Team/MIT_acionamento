@@ -45,6 +45,13 @@
 #define DPI 6.28318530717958647692
 #define sqrt2 1.4142135623730951
 
+#define CPU_FREQ        200E6
+#define LSPCLK_FREQ     CPU_FREQ/4
+#define SCI_FREQ        115200
+//#define SCI_PRD         (LSPCLK_FREQ/(SCI_FREQ*8))-1
+const int16 SCI_PRD=(LSPCLK_FREQ/(SCI_FREQ*8))-1;
+
+#define BUFFER_SIZE 2
 
 //Variáveis do encoder
 int pul_rev, freq_int;
@@ -52,7 +59,7 @@ float n_rpm, wt_ant, wt;
 float wa;
 
 //Variáveis gerais.
-
+int_least8_t mandar;
 float w = 0; // Velocidade angular elétrica medida em rpm
 
 unsigned int Posicao_ADC = 0; //Leitura da velocidade no módulo eqep.
@@ -121,13 +128,22 @@ float32 theta=0, theta_ant=0; // ângulos do campo magnético para o integrador 
  // Leitura das medidas dos sensores
 
 float32 buffer1[12000];
-//float32 buffer2[12000];
-//float32 buffer3[12000];
 
+unsigned char buffer_tx[] = {'a',  '\r'};
+unsigned char buffer_rx[] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+unsigned char buffer_ind = 0, tx_buffer_send = 0, rx_buffer_ready = 0;
+
+
+void send_buffer_tx(void);
 void Setup_GPIO(void);
 void Setup_INTERRUPT(void);
 void Setup_ePWM(void);
 void Setup_ADC(void);
+//Função do Encoder
+void Setup_eQEP(void);
+void Setup_UartA(void);
+
 
 void Liga_Bancada(void);
 void Desliga_Bancada(void);
@@ -135,14 +151,14 @@ void Stop_SPWM(void);
 
 void Set_ePWM_Frequency(uint32_t freq_pwm);
 
-//Função do Encoder
-void Setup_eQEP(void);
 
 void Calc_RPM(void);
 
 
 __interrupt void alarm_handler_isr(void);     // Alarm Handler interrupt service routine function prototype.
 __interrupt void adca_isr(void);
+__interrupt void isr_uart_rx(void);
+
 
 
 
@@ -166,19 +182,14 @@ void main(void){
 
                                                        //Para garantir um n�mero inteiro de pulsos por semiciclo. (RASHID).
 
-    Setup_GPIO();                                      // Configura��o dos GPIOs
-    Setup_ePWM();                                      // Abre todas as chaves
-    Setup_ADC();
-    Setup_eQEP();
-
                                                           // Configura��o das interrup��es
 
     EALLOW;                                             // Endere�o das rotinas de interrup��es
         PieVectTable.ADCA1_INT = &adca_isr;
         PieVectTable.XINT2_INT  =  &alarm_handler_isr;
+        PieVectTable.SCIA_RX_INT = &isr_uart_rx;
+
     EDIS;
-
-
 
     EALLOW;
 
@@ -197,26 +208,38 @@ void main(void){
     EDIS;
 
     EALLOW;
-   //##########__CONFIGURA��O XINT2 (ALARME)__#######################################################################
         PieCtrlRegs.PIECTRL.bit.ENPIE  = 1;        // Enable the PIE block
         PieCtrlRegs.PIEIER1.bit.INTx5 = 1;        // Enable the PIE Group 1 INT 5. (XINT2)
 
         XintRegs.XINT2CR.bit.POLARITY = 0;         // Interrupt will occur on the falling edge (high-to-low transition)
         XintRegs.XINT2CR.bit.ENABLE   = 1;         // Enable XINT 2.
+
+        PieCtrlRegs.PIEIER9.bit.INTx1 = 1;      // SCIA RX
+
     EDIS;
 
     //##########__CONFIGURA��O ADC_INT__#######################################################################
       EALLOW;
-
        PieCtrlRegs.PIEIER1.bit.INTx1   = 1 ;         // Habilita o PIE para interrup��o do ADC.
        AdcaRegs.ADCINTSEL1N2.bit.INT1E =1;
        EDIS;
-
-
     EINT;                                          // Enable Global interrupt INTM
     ERTM;                                          // Enable Global realtime interrupt DBGM , UTILIZADO PARA ALTERAR O VALOR DOS REGISTRADORES EM TEMPO REAL.
 
- //################################# Varáveis da Transformação ########################
+//#############################################################################
+
+    Setup_GPIO();                                      // Configura��o dos GPIOs
+    Setup_ePWM();                                      // Abre todas as chaves
+    Setup_ADC();
+    Setup_eQEP();
+    Setup_UartA();
+
+    InitCpuTimers();
+    ConfigCpuTimer(&CpuTimer0, 200, 1000000);
+    CpuTimer0Regs.TCR.all = 0x4001;
+
+
+ //################################# Variáveis da Transformação ########################
 
     Lr= Llr+Lm;
     Ls= Lls+Lm;
@@ -232,8 +255,10 @@ void main(void){
     {
         Comando_L_D != 0 ? Liga_Bancada():Desliga_Bancada(); // Uiliza o debug em tempo real para ligar ou desligar a bancada
                                                              // Alterando o valor da vari�vel Comando_L_D na janela de express�es
-                                                             // do code composer studio.
-
+                                                              // do code composer studio.
+        sprintf(buffer_tx, "%d \n \r", mandar);
+        send_buffer_tx();
+        //mandar=0;
 
     }
 
@@ -242,9 +267,8 @@ void main(void){
 __interrupt void adca_isr(){
     DINT;
     // Rotina ADC com 12 KHZ (frequ�ncia de amostragem do sinal senoidal da moduladora).
-
-        Calc_RPM();
-
+    mandar++;
+    Calc_RPM();
 //####################### Partida em rampa ############################################################################################################
 
           if(SPWM_State==1){
@@ -255,38 +279,10 @@ __interrupt void adca_isr(){
                   SPWM_State++;
               }
           }
-
-  //####################### Contadores de "tempo" ############################################################################################################
-
-       if(SPWM_State==2  ){
-
-           if(pos_buf<1000){
-                pos_buf++;
-            }
-           else{
-                pos_buf=0;
-
-            }
-
-            if(index==1000){
-                Vqref=0.42;
-            }
-
-            if(pos_buf%10==0 && index<12000){
-                index++;
-            }
-
-
-
-
   //####################### Aquisição de Dados ############################################################################################################
-           // buffer1[index]=n_rpm;
 
-        }
-//######################### Estimativa Indireta de Fluxo ##################################################################################################
-
+  //######################### Estimativa Indireta de Fluxo ##################################################################################################
          theta= __divf32( (__divf32(Vqref,Vdref*T) + n_ref*0.1047197551*1),200) + theta_ant; // theta é o ângulo do campo magnético. 1/12000 -> tempo de amostragem
-
 //#################################Transformada Inversa Clarke-Park##########################################################################################
 
          Va= (float32)  (TB_Prd/2)*(1+(0.8164965819*(Vdref*__cos(theta)+ Vqref*__sin(theta))));
@@ -297,8 +293,6 @@ __interrupt void adca_isr(){
          EPwm5Regs.CMPA.bit.CMPA = Vb;
          EPwm6Regs.CMPA.bit.CMPA = Vc;
 
-
-
         // Transoforma o resultado decimal equivalente ao bin�rio da convers�o de cada fase em uma tens�o de -1,15 a 1,15 V
         Converted_Voltage_P1 = __divf32(3.0*AdcaResultRegs.ADCRESULT0,4096.0)-1.65;
         Converted_Voltage_P2 = __divf32(3.0*AdcbResultRegs.ADCRESULT1,4096.0)-1.65;
@@ -308,14 +302,10 @@ __interrupt void adca_isr(){
         // * Sensor Voltage Range = 0.5 : 2.8 V
         // * Converted_Voltage_Px Voltage Range = -1.15 : 1.15 V
 
-
         //Calcula a corrente atrav�s da tens�o pela sensibilidade do sensor : 18.4 mV / A
          current_phase_1 =- __divf32(Converted_Voltage_P1,0.0184);
          current_phase_2 = -__divf32(Converted_Voltage_P2 ,0.0184);
          current_phase_3 =- __divf32(Converted_Voltage_P3,0.0184);
-
-
-        // wt_ant=wt; //faço isso para calcular o delta X
 
          theta_ant=theta; //parte do integrador discreto
 
@@ -323,8 +313,6 @@ __interrupt void adca_isr(){
              theta=0.0;
              delta_pos=0;
          }
-
-
         AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1;    // Limpa as FLAGS provinientes do Trigger.
         PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;  //
         EINT;
@@ -336,19 +324,41 @@ interrupt void alarm_handler_isr(void){
 
     //Alarme soou, codigo ficar� preso at� que o bot�o de "RE-DEBUG" seja pressinado no DSP.
 
-    Stop_SPWM();                                      //Para o PWM e seta as sa�das (Abre as chaves).
+    Stop_SPWM();                                      //Para o PWM e seta as saidas (Abre as chaves).
 
     AlarmCount++;                                      // Contador do alarme
 
     while(1){
-
-        GpioDataRegs.GPATOGGLE.bit.GPIO31 =1;       //LEDS do DSP para sinaliza��o do Alarme
+        GpioDataRegs.GPATOGGLE.bit.GPIO31 =1;       //LEDS do DSP para sinalizacao do Alarme
         GpioDataRegs.GPBTOGGLE.bit.GPIO34 =1;
-        DELAY_US(400000);
+        DELAY_US(500000);
     }
 
- //  PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;         // Reabilita interrup��es provenientes do alarme
+ //  PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;         // Reabilita interrupcoes provenientes do alarme
 }
+
+void send_buffer_tx(void){
+    unsigned char bff;
+    for(bff = 0; bff <strlen(buffer_tx); bff++){
+        //while (SciaRegs.SCIFFTX.bit.TXFFST != 0){}
+        while(!SciaRegs.SCICTL2.bit.TXRDY){}
+        SciaRegs.SCITXBUF.all = buffer_tx[bff];
+    }
+}
+
+__interrupt void isr_uart_rx(void){
+    // Read 8 bytes
+    buffer_ind = 0;
+    while(buffer_ind != BUFFER_SIZE)
+        buffer_rx[buffer_ind++] = SciaRegs.SCIRXBUF.all;  // Read data
+    rx_buffer_ready = 1;
+
+    SciaRegs.SCIFFRX.bit.RXFFOVRCLR = 1;   // Clear Overflow flag
+    SciaRegs.SCIFFRX.bit.RXFFINTCLR = 1;   // Clear Interrupt flag
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP9;       // Issue PIE ack
+}
+
+
 
 
 void Setup_GPIO(void){
@@ -522,15 +532,26 @@ EALLOW;
    GpioCtrlRegs.GPBGMUX1.bit.GPIO40 = 0;
    GpioCtrlRegs.GPBDIR.bit.GPIO40 = 1;
 
+ //##########################__Comm_Serial_################################
+   //GPIO 42 e 43 USCI-A
+      GpioCtrlRegs.GPBGMUX1.bit.GPIO42 = 3;
+      GpioCtrlRegs.GPBMUX1.bit.GPIO42 = 3;
+      GpioCtrlRegs.GPBPUD.bit.GPIO42 = 1;
+      GpioCtrlRegs.GPBDIR.bit.GPIO42 = 1;
+      GpioCtrlRegs.GPBCSEL2.bit.GPIO42 = GPIO_MUX_CPU1;
+
+      GpioCtrlRegs.GPBGMUX1.bit.GPIO43 = 3;
+      GpioCtrlRegs.GPBMUX1.bit.GPIO43 = 3;
+      GpioCtrlRegs.GPBPUD.bit.GPIO43 = 0;
+      GpioCtrlRegs.GPBDIR.bit.GPIO43 = 0;
+      GpioCtrlRegs.GPBCSEL2.bit.GPIO43 = GPIO_MUX_CPU1;
+      GpioCtrlRegs.GPBQSEL1.bit.GPIO43 = 3;           // Asynch input
 
 
 EDIS;
 
 
 }
-
-
-
 
 void Setup_ePWM(void){
 
@@ -633,7 +654,7 @@ void Setup_ePWM(void){
         // PWM sendo utilizado como TIMER , gerando SOC a 12 Khz. 4165
        // Frequencia de amostragem deve ser um multiplo de 60.
 
-     EPwm1Regs.TBPRD = 4165 ;  // Sampling at 12 Khz / TBPRD = TPWM/TBCLK - 1 -> FAZER O CALCULO COM A FREQ !!
+     EPwm1Regs.TBPRD = 65530 ;  // Sampling at 12 Khz / TBPRD = TPWM/TBCLK - 1 -> FAZER O CALCULO COM A FREQ !!
      EPwm1Regs.TBPHS.bit.TBPHS = 0;
      EPwm1Regs.TBCTR = 0X0000;
      EPwm1Regs.TBCTL.bit.CTRMODE= TB_COUNT_UP; // Configura como up count mode.
@@ -762,6 +783,7 @@ void Liga_Bancada(void)
 
         Setup_GPIO();                         //Libera PWM.
         IER |= M_INT1;
+        IER |= M_INT9;
 
         aux++;
         EDIS;
@@ -852,32 +874,33 @@ void Calc_RPM(void){
        }
 }
 
-/*
-    //Configura o EQep1:
+void Setup_UartA(void){
+    // pg 2279 spruhm8i.pdf - Technical reference
+     SciaRegs.SCICCR.all = 0x0007;           // 1 stop bit,  No loopback, no parity,8 char bits,
+     //SciaRegs.SCICCR.bit.SCICHAR = 0x07;     // SCI character length from one to eight           bits
 
-    //   EQep1Regs.QUPRD = 0x2AFB85;          // Unit Timer for 71Hz at 200 MHz-> peguei aprox 100 pulsos de quadratura;
-                                                // SYSCLKOUT
-       EQep1Regs.QPOSINIT=0x9;
+     // async mode, idle-line protocol
+     SciaRegs.SCICTL1.all = 0x0003;          // enable TX, RX, internal SCICLK, Disable RX ERR, SLEEP, TXWAKE
+     SciaRegs.SCICTL2.bit.TXINTENA = 0;
+     SciaRegs.SCICTL2.bit.RXBKINTENA = 1;
+     SciaRegs.SCIHBAUD.all = 0x0000;
+     SciaRegs.SCILBAUD.all = SCI_PRD;
 
-//QEPCTL -
-       EQep1Regs.QEPCTL.bit.FREE_SOFT = 0x2;  //QEP Control =QEPCTL
-       EQep1Regs.QEPCTL.bit.PCRM = 0x1;       // PCRM=01 -> Position counter reset on the maximum position
-       EQep1Regs.QEPCTL.bit.QPEN = 1;       //QEP enable
-       EQep1Regs.QEPCTL.bit.SEI=2;          //2h (R/W) = Initializes the position counter on rising edge of the QEPS signal
-       EQep1Regs.QEPCTL.bit.SWI=1;
+     SciaRegs.SCIFFTX.all = 0xC022;
+     SciaRegs.SCIFFRX.all = 0x0028;
 
-//QPOSCTL
-       EQep1Regs.QPOSMAX = 0x7D0;            //0x960 = 4*600  contagens de quadratura
+     /*
+     SciaRegs.SCIFFRX.bit.RXFFOVF = 0;
+     SciaRegs.SCIFFRX.bit.RXFFOVRCLR = 0;
+     SciaRegs.SCIFFRX.bit.RXFIFORESET = 0;
+     SciaRegs.SCIFFRX.bit.RXFFST = 0;
+     SciaRegs.SCIFFRX.bit.RXFFINT = 0;
+     SciaRegs.SCIFFRX.bit.RXFFINTCLR = 0;
+     SciaRegs.SCIFFRX.bit.RXFFIENA = 1;
+     SciaRegs.SCIFFRX.bit.RXFFIL = 1;*/
 
-       EQep1Regs.QDECCTL.bit.QSRC = 1;      //Direction-count mode (QCLK = xCLK, QDIR = xDIR)
-       EQep1Regs.QDECCTL.bit.SWAP = 0;      //
-
-       EQep1Regs.QCAPCTL.bit.CEN = 1;       // QEP Capture Enable
-       EQep1Regs.QCAPCTL.bit.CCPS = 0x0;      // 1/64 for CAP clock
-       EQep1Regs.QCAPCTL.bit.UPPS = 0x2;      // 1/8 for unit position
-
-
-       //EQep1Regs.QEINT.bit.UTO = 1;       // 400 Hz interrupt for speed estimation
-         EDIS;
- *
- */
+     SciaRegs.SCIFFCT.all = 0x00;
+     SciaRegs.SCICTL1.all = 0x0023;     // Relinquish SCI from Reset
+     SciaRegs.SCIFFTX.bit.TXFIFORESET = 1;
+     SciaRegs.SCIFFRX.bit.RXFIFORESET = 1;
+}
