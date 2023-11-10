@@ -44,7 +44,27 @@
 #define pi 3.14159265358979323846
 #define DPI 6.28318530717958647692
 #define sqrt2 1.4142135623730951
+#define P 2 // Pole Pairs
 
+
+typedef struct {
+    float32 ThetaE;
+    float32 ThetaE_Sincrono;
+    float32 ThetaE_sl;
+    float32 ThetaM;
+    float32 ThetaM_ant;
+    float32 id;
+    float32 iq;
+    float32 Vd;
+    float32 Vq;
+    float32 speed;
+}control;
+
+control read;
+control ref;
+Uint16 w1,w2,w3;
+
+float32 cos_value,sin_value;
 
 //Variáveis do encoder
 int pul_rev, freq_int;
@@ -107,7 +127,7 @@ float32 Ls;// = Lls+Lm;                // Indutância própria no estator
 float32 p = 2.0;                      // pares de polos -> 4polos
 
 
-float32 T; // =Lr/Rr
+float32 T; // =Rr/Lr
 
 //########################## Transformada Inversa de Clarke-Park #################################################
 
@@ -220,9 +240,10 @@ void main(void){
 
     Lr= Llr+Lm;
     Ls= Lls+Lm;
-    T = __divf32(Lr,Rr);
+    T = __divf32(Rr,Lr);
 
-    Vqref=0.10; // zero para poder crescer em rampa
+    ref.Vq=0.0; // zero para poder crescer em rampa
+    ref.Vd=0.0;
     //##########__CONFIGURACAO I2C__#######################################################################
 
     I2cAGpioConfig(I2C_A_GPIO0_GPIO1); //Configuro os MUX para ler o gpio 0 e 1
@@ -239,38 +260,38 @@ void main(void){
 //##########__ADCA ISR___#######################################################################
 __interrupt void adca_isr(){
     DINT;
-    // Rotina ADC com 12 KHZ (frequ�ncia de amostragem do sinal senoidal da moduladora).
-
-        Calc_RPM();
-
-//####################### Partida em rampa ############################################################################################################
-
-          if(SPWM_State==1){
-              if(Vqref<=0.42){
-                  Vqref=Vqref+0.000001;
-              }
-              else{
-                  SPWM_State++;
-              }
-          }
-
-
+    // Rotina ADC com 12 KHZ (frequencia de amostragem do sinal senoidal da moduladora).
 
 //######################### Estimativa Indireta de Fluxo ##################################################################################################
+    Calc_RPM();
+    // Contido no TCC de LEONARDO DUARTE MILFONT (topico 2.4 pag35)
 
-         theta= __divf32( (__divf32(Vqref,Vdref*T) + n_ref*0.1047197551*1),200) + theta_ant; // theta é o ângulo do campo magnético. 1/12000 -> tempo de amostragem
+    //read.ThetaM+= wa* 8.333E-5; //integral do omega_M
+    //if (read.ThetaM>DPI) {
+   //    read.ThetaM=0;
+    //}
 
-//#################################Transformada Inversa Clarke-Park##########################################################################################
+    read.ThetaE= P*read.ThetaM;                               // Valor da velocidade angular elétrica
+    if (read.ThetaE>DPI) {
+       read.ThetaE-=DPI;
+    }
 
-         Va= (float32)  (TB_Prd/2)*(1+(0.8164965819*(Vdref*__cos(theta)+ Vqref*__sin(theta))));
-         Vb= (float32)  (TB_Prd/2)*(1+(0.8164965819*(Vdref*__cos(theta+2.0943951024)+ Vqref*__sin(theta+2.0943951024))));
-         Vc= (float32)  (TB_Prd/2)*(1+(0.8164965819*(Vdref*__cos(theta+4.1887902048)+ Vqref*__sin(theta+4.1887902048))));
+    if(ref.id==0){
+        read.ThetaE_sl=0;
+    }
+    else{
+        read.ThetaE_sl += T* __divf32(read.iq,read.id)* 8.333E-5; //integral do omega_sl
+        if (read.ThetaE_sl>DPI) {
+            read.ThetaE_sl-=DPI;
+        }
+    }
 
-         EPwm4Regs.CMPA.bit.CMPA = Va;
-         EPwm5Regs.CMPA.bit.CMPA = Vb;
-         EPwm6Regs.CMPA.bit.CMPA = Vc;
+    read.ThetaE_Sincrono=read.ThetaE+read.ThetaE_sl;          // Estimativa do valor do theta nas variáveis do rotor
 
+    cos_value= __cos(read.ThetaE_Sincrono);
+    sin_value= __sin(read.ThetaE_Sincrono);
 
+//##########__FEEDBACK_MALHA_ELETRICA__################################################
 
         // Transoforma o resultado decimal equivalente ao bin�rio da convers�o de cada fase em uma tens�o de -1,15 a 1,15 V
         Converted_Voltage_P1 = __divf32(3.0*AdcaResultRegs.ADCRESULT0,4096.0)-1.65;
@@ -281,28 +302,57 @@ __interrupt void adca_isr(){
         // * Sensor Voltage Range = 0.5 : 2.8 V
         // * Converted_Voltage_Px Voltage Range = -1.15 : 1.15 V
 
-
         //Calcula a corrente atrav�s da tens�o pela sensibilidade do sensor : 18.4 mV / A
          current_phase_1 =- __divf32(Converted_Voltage_P1,0.0184);
          current_phase_2 = -__divf32(Converted_Voltage_P2 ,0.0184);
          current_phase_3 =- __divf32(Converted_Voltage_P3,0.0184);
 
+         read.id=(0.8165)*((current_phase_1-0.5*current_phase_2-0.5*current_phase_3)*cos_value+(current_phase_2-current_phase_3)*0.866*sin_value);
+         read.iq=(0.8165)*((current_phase_2-current_phase_3)*0.866*cos_value+(current_phase_2+0.5*current_phase_3-current_phase_1)*sin_value);
 
-        // wt_ant=wt; //faço isso para calcular o delta X
+ //####################### Partida em Rampa ############################################################################################################
 
-         theta_ant=theta; //parte do integrador discreto
+          if(SPWM_State==1){
+              if(ref.Vq<=0.42){
+                  ref.Vq=ref.Vq+0.000001;
+              }
+              else{
+                  SPWM_State++;
+              }
+          }
 
-         if(theta>DPI){
-             theta=0.0;
-             delta_pos=0;
-         }
+//##############################___Transformada Inversa Clarke-Park___#######################################################################################
 
+            Va= (uint16_t)  (TB_Prd*0.4)*(1+(ref.Vq*cos_value+ref.Vd*sin_value));
+            Vb= (uint16_t)  (TB_Prd*0.4)*(1+((0.707106781*(ref.Vd*sin_value+ref.Vq*cos_value)-0.5*Va)));
+            Vc= (uint16_t)  -Va-Vb;
+
+            if(index  == 200 )
+              index = 0;     //Limpa o Buffer.
+            else
+              index++;
+
+         //Gera Moduladora Senoidal .
+            w1 = (Uint16) (TB_Prd/2)*(1+Mi*__sin(__divf32(2*pi,NOS) * (float) index   ));
+            w2 = (Uint16) (TB_Prd/2)*(1+Mi*__sin(__divf32(2*pi,NOS) * (float) index - 2*pi/3));
+            w3 = (Uint16) (TB_Prd/2)*(1+Mi*__sin(__divf32(2*pi,NOS) * (float) index - 4*pi/3));
+
+            EPwm4Regs.CMPA.bit.CMPA = w1;
+            EPwm5Regs.CMPA.bit.CMPA = w2;
+            EPwm6Regs.CMPA.bit.CMPA = w3;
+
+        /*
+         EPwm4Regs.CMPA.bit.CMPA = Va;
+         EPwm5Regs.CMPA.bit.CMPA = Vb;
+         EPwm6Regs.CMPA.bit.CMPA = Vc;
+        */
+
+         //theta_ant=theta; //parte do integrador discreto
 
         AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1;    // Limpa as FLAGS provinientes do Trigger.
         PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;  //
         EINT;
 }
-
 
 //##########__ALARME ISR___#######################################################################
 interrupt void alarm_handler_isr(void){
@@ -750,7 +800,7 @@ void Desliga_Bancada(void)
 
     GpioDataRegs.GPBCLEAR.bit.GPIO40 = 1;  // Desliga fonte de pot�ncia
 
-    DELAY_US(2000000);
+    DELAY_US(5000000);
 
     GpioDataRegs.GPBCLEAR.bit.GPIO41 = 1; // Desliga fonte de controle
 
@@ -806,21 +856,27 @@ void Setup_eQEP(){
 
 
 void Calc_RPM(void){
+
     if(EQep1Regs.QFLG.bit.UTO){             // Unit Timeout event
         new_pos = EQep1Regs.QPOSLAT;        // Latched POSCNT value
         delta_pos = (new_pos > old_pos) ? (new_pos - old_pos) : ((0xFFFFFFFF - old_pos) + new_pos);
         old_pos = new_pos;
         EQep1Regs.QCLR.bit.UTO = 1;
-    }
-    rpm = ((float)(delta_pos)) * 0.3 * 60;
 
-    wa = (1.0*60.0/2048.0)/(EQep1Regs.QCPRD*8.0/200.0e6);
-    //wa = (32.0*60.0/2048.0)/(EQep1Regs.QCPRD*6.4e-7);
+    }
+
+       //rpm = ((float)(delta_pos)) * 0.3 * 60;
+       wa = (1.0*60.0/(2000.0))/(EQep1Regs.QCPRD*8.0/200.0e6);
+
+      // wa = (32.0*60.0/2048.0)/(EQep1Regs.QCPRD*6.4e-7);
 
        if(EQep1Regs.QEPSTS.bit.COEF == 0 && EQep1Regs.QEPSTS.bit.CDEF == 0){
-           wa = (32.0*60.0/9150.0)/(EQep1Regs.QCPRD*64.0/200.0e6);
+           //wa = (32.0*60.0/9150.0)/(EQep1Regs.QCPRD*64.0/200.0e6);
+           wa = (1.0*60.0/(2000.0))/(EQep1Regs.QCPRD*8.0/200.0e6);
        }else{
            EQep1Regs.QEPSTS.bit.COEF = 0;
            EQep1Regs.QEPSTS.bit.CDEF = 0;
        }
 }
+
+
