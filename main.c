@@ -48,16 +48,16 @@
 
 
 typedef struct {
-    float32 ThetaE;
-    float32 ThetaE_Sincrono;
-    float32 ThetaE_sl;
-    float32 ThetaM;
-    float32 ThetaM_ant;
-    float32 id;
-    float32 iq;
-    float32 Vd;
-    float32 Vq;
-    float32 speed;
+    float ThetaE;
+    float ThetaE_Sincrono;
+    float ThetaE_sl;
+    float ThetaM;
+    float ThetaM_ant;
+    float id;
+    float iq;
+    float Vd;
+    float Vq;
+    float speed;
 }control;
 
 control read;
@@ -69,14 +69,14 @@ float32 cos_value,sin_value;
 //Variáveis do encoder
 int pul_rev, freq_int;
 float n_rpm, wt_ant, wt;
-float wa;
+float32 wa;
 
 //Variáveis gerais.
 
 float w = 0; // Velocidade angular elétrica medida em rpm
 
 unsigned int Posicao_ADC = 0; //Leitura da velocidade no módulo eqep.
-float Rotor_Posicao = 0; //Posição angular do rotor.
+float32 Rotor_Posicao = 0; //Posição angular do rotor.
 float rpm = 0;
 float rpm_ref = 1200.0;
 
@@ -126,11 +126,13 @@ float32 Lr;// = Llr+Lm;                // Indutância própria no rotor
 float32 Ls;// = Lls+Lm;                // Indutância própria no estator
 float32 p = 2.0;                      // pares de polos -> 4polos
 
-
+int i;
 float32 T; // =Rr/Lr
 
 //########################## Transformada Inversa de Clarke-Park #################################################
 
+//Svpwm
+float T1[3],Ton[3], Teff, To, Toffset, maior, menor;
 
 float32 Va,Vb,Vc;
 float32 Vdref=0.4,Vqref=0.5,n_ref=10; // n_ref -> Velocidade de referência do campo magnético (Valores de referência da simulação)
@@ -242,7 +244,7 @@ void main(void){
     Ls= Lls+Lm;
     T = __divf32(Rr,Lr);
 
-    ref.Vq=0.0; // zero para poder crescer em rampa
+    ref.Vq=0.80; // zero para poder crescer em rampa
     ref.Vd=0.0;
     //##########__CONFIGURACAO I2C__#######################################################################
 
@@ -266,30 +268,27 @@ __interrupt void adca_isr(){
     Calc_RPM();
     // Contido no TCC de LEONARDO DUARTE MILFONT (topico 2.4 pag35)
 
-    //read.ThetaM+= wa* 8.333E-5; //integral do omega_M
-    //if (read.ThetaM>DPI) {
-   //    read.ThetaM=0;
-    //}
+    read.ThetaM +=(float) __divf32(wa,114591.559157);//integral do omega_M
+    //DacaRegs.DACVALS.all=read.ThetaM*(1024/DPI);
 
-    read.ThetaE= P*read.ThetaM;                               // Valor da velocidade angular elétrica
-    if (read.ThetaE>DPI) {
-       read.ThetaE-=DPI;
+    if (read.ThetaM>DPI) {
+        read.ThetaM=0;
     }
 
-    if(ref.id==0){
+    read.ThetaE= P*read.ThetaM;                               // Valor da velocidade angular elétrica
+
+    if(ref.id==0 || read.id==0 ){
         read.ThetaE_sl=0;
     }
     else{
         read.ThetaE_sl += T* __divf32(read.iq,read.id)* 8.333E-5; //integral do omega_sl
-        if (read.ThetaE_sl>DPI) {
-            read.ThetaE_sl-=DPI;
-        }
     }
 
-    read.ThetaE_Sincrono=read.ThetaE+read.ThetaE_sl;          // Estimativa do valor do theta nas variáveis do rotor
+     read.ThetaE_Sincrono=read.ThetaE+read.ThetaE_sl;          // Estimativa do valor do theta nas variáveis do rotor
 
-    cos_value= __cos(read.ThetaE_Sincrono);
-    sin_value= __sin(read.ThetaE_Sincrono);
+    cos_value= cos(read.ThetaE_Sincrono);
+    sin_value= sin(read.ThetaE_Sincrono);
+   // DacaRegs.DACVALS.all=(cos_value+1)*1024;
 
 //##########__FEEDBACK_MALHA_ELETRICA__################################################
 
@@ -304,17 +303,23 @@ __interrupt void adca_isr(){
 
         //Calcula a corrente atrav�s da tens�o pela sensibilidade do sensor : 18.4 mV / A
          current_phase_1 =- __divf32(Converted_Voltage_P1,0.0184);
-         current_phase_2 = -__divf32(Converted_Voltage_P2 ,0.0184);
+         current_phase_2 =-__divf32(Converted_Voltage_P2 ,0.0184);
          current_phase_3 =- __divf32(Converted_Voltage_P3,0.0184);
+         //current_phase_2 =-current_phase_1-current_phase_3;
+
+
+        // DacaRegs.DACVALS.all=(current_phase_1+23)*100;
 
          read.id=(0.8165)*((current_phase_1-0.5*current_phase_2-0.5*current_phase_3)*cos_value+(current_phase_2-current_phase_3)*0.866*sin_value);
          read.iq=(0.8165)*((current_phase_2-current_phase_3)*0.866*cos_value+(current_phase_2+0.5*current_phase_3-current_phase_1)*sin_value);
 
+         DacaRegs.DACVALS.all=(read.id+12)*100;
+
  //####################### Partida em Rampa ############################################################################################################
 
           if(SPWM_State==1){
-              if(ref.Vq<=0.42){
-                  ref.Vq=ref.Vq+0.000001;
+              if(ref.Vq<=1){
+              //    ref.Vq=ref.Vq+0.0001;
               }
               else{
                   SPWM_State++;
@@ -323,15 +328,16 @@ __interrupt void adca_isr(){
 
 //##############################___Transformada Inversa Clarke-Park___#######################################################################################
 
-            Va= (uint16_t)  (TB_Prd*0.4)*(1+(ref.Vq*cos_value+ref.Vd*sin_value));
-            Vb= (uint16_t)  (TB_Prd*0.4)*(1+((0.707106781*(ref.Vd*sin_value+ref.Vq*cos_value)-0.5*Va)));
-            Vc= (uint16_t)  -Va-Vb;
+            Va=   ((ref.Vq*cos_value+ref.Vd*sin_value));
+            Vb=   (((0.707106781*(ref.Vd*sin_value+ref.Vq*cos_value)-0.5*Va)));
+            Vc=   -Va-Vb;
 
             if(index  == 200 )
               index = 0;     //Limpa o Buffer.
             else
               index++;
 
+            /*
          //Gera Moduladora Senoidal .
             w1 = (Uint16) (TB_Prd/2)*(1+Mi*__sin(__divf32(2*pi,NOS) * (float) index   ));
             w2 = (Uint16) (TB_Prd/2)*(1+Mi*__sin(__divf32(2*pi,NOS) * (float) index - 2*pi/3));
@@ -340,12 +346,42 @@ __interrupt void adca_isr(){
             EPwm4Regs.CMPA.bit.CMPA = w1;
             EPwm5Regs.CMPA.bit.CMPA = w2;
             EPwm6Regs.CMPA.bit.CMPA = w3;
+            */
 
-        /*
-         EPwm4Regs.CMPA.bit.CMPA = Va;
-         EPwm5Regs.CMPA.bit.CMPA = Vb;
-         EPwm6Regs.CMPA.bit.CMPA = Vc;
-        */
+
+        // first step
+            T1[0]=(Va);//*(TBPRD/(2*M_SQRT2)); // 3711.6= TBPRD/sqrt(2) --> 3711.6/2 = 1855.8
+            T1[1]=(Vb);//*(TBPRD/(2*M_SQRT2));
+            T1[2]=(Vc);//*(TBPRD/(2*M_SQRT2));
+        // second step and Third step:
+
+            menor = T1[0];
+            maior = T1[0];
+
+            for ( i = 1; i < 3; i++) {
+                if (T1[i] < menor) {
+                    menor = T1[i];
+                }
+                if (T1[i] > maior) {
+                    maior = T1[i];
+                }
+            }
+        // fourth step:
+            Teff=maior-menor;
+        //fifth step:
+            To = (TB_Prd) - Teff;
+        //sixth step:
+            Toffset=To/2-menor;
+        //Last Step:
+
+            Ton[0]=T1[0]+Toffset;
+            Ton[1]=T1[1]+Toffset;
+            Ton[2]=T1[2]+Toffset;
+
+
+         EPwm4Regs.CMPA.bit.CMPA =(uint16_t) Ton[0];
+         EPwm5Regs.CMPA.bit.CMPA =(uint16_t) Ton[1];
+         EPwm6Regs.CMPA.bit.CMPA =(uint16_t) Ton[2];
 
          //theta_ant=theta; //parte do integrador discreto
 
@@ -866,13 +902,13 @@ void Calc_RPM(void){
     }
 
        //rpm = ((float)(delta_pos)) * 0.3 * 60;
-       wa = (1.0*60.0/(2000.0))/(EQep1Regs.QCPRD*8.0/200.0e6);
+       wa =__divf32(__divf32 ((1.0*60.0),(2000.0)),__divf32(EQep1Regs.QCPRD*8.0,200.0E6));
 
       // wa = (32.0*60.0/2048.0)/(EQep1Regs.QCPRD*6.4e-7);
 
        if(EQep1Regs.QEPSTS.bit.COEF == 0 && EQep1Regs.QEPSTS.bit.CDEF == 0){
            //wa = (32.0*60.0/9150.0)/(EQep1Regs.QCPRD*64.0/200.0e6);
-           wa = (1.0*60.0/(2000.0))/(EQep1Regs.QCPRD*8.0/200.0e6);
+           wa =__divf32(__divf32 ((1.0*60.0),(2000.0)),__divf32(EQep1Regs.QCPRD*8.0,200.0E6));
        }else{
            EQep1Regs.QEPSTS.bit.COEF = 0;
            EQep1Regs.QEPSTS.bit.CDEF = 0;
