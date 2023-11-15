@@ -83,6 +83,10 @@ float rpm_ref = 1200.0;
 unsigned long delta_pos = 0;
 unsigned int new_pos = 0, old_pos = 0;
 
+//FOC Transforms:
+const float r3_div2 = 0.86602540378443864676372317075294;
+const float r2div3 = 0.81649658092772603273242802490196;
+const float r2_div2 = 0.70710678118654752440084436210485;
 
 Uint16 AlarmCount=0;                        // Alarm Counter
 
@@ -313,7 +317,7 @@ __interrupt void adca_isr(){
          read.id=(0.8165)*((current_phase_1-0.5*current_phase_2-0.5*current_phase_3)*cos_value+(current_phase_2-current_phase_3)*0.866*sin_value);
          read.iq=(0.8165)*((current_phase_2-current_phase_3)*0.866*cos_value+(current_phase_2+0.5*current_phase_3-current_phase_1)*sin_value);
 
-         DacaRegs.DACVALS.all=(read.id+12)*100;
+        // DacaRegs.DACVALS.all=(read.id+12)*100;
 
  //####################### Partida em Rampa ############################################################################################################
 
@@ -328,31 +332,14 @@ __interrupt void adca_isr(){
 
 //##############################___Transformada Inversa Clarke-Park___#######################################################################################
 
-            Va=   ((ref.Vq*cos_value+ref.Vd*sin_value));
-            Vb=   (((0.707106781*(ref.Vd*sin_value+ref.Vq*cos_value)-0.5*Va)));
-            Vc=   -Va-Vb;
-
-            if(index  == 200 )
-              index = 0;     //Limpa o Buffer.
-            else
-              index++;
-
-            /*
-         //Gera Moduladora Senoidal .
-            w1 = (Uint16) (TB_Prd/2)*(1+Mi*__sin(__divf32(2*pi,NOS) * (float) index   ));
-            w2 = (Uint16) (TB_Prd/2)*(1+Mi*__sin(__divf32(2*pi,NOS) * (float) index - 2*pi/3));
-            w3 = (Uint16) (TB_Prd/2)*(1+Mi*__sin(__divf32(2*pi,NOS) * (float) index - 4*pi/3));
-
-            EPwm4Regs.CMPA.bit.CMPA = w1;
-            EPwm5Regs.CMPA.bit.CMPA = w2;
-            EPwm6Regs.CMPA.bit.CMPA = w3;
-            */
-
+            Va = r2div3*(ref.Vd*cos_value - ref.Vq*sin_value);
+            Vb = r2_div2*(ref.Vd*sin_value + ref.Vq*cos_value) - Va*0.5;
+            Vc = -(Va + Vb);
 
         // first step
-            T1[0]=(Va);//*(TBPRD/(2*M_SQRT2)); // 3711.6= TBPRD/sqrt(2) --> 3711.6/2 = 1855.8
-            T1[1]=(Vb);//*(TBPRD/(2*M_SQRT2));
-            T1[2]=(Vc);//*(TBPRD/(2*M_SQRT2));
+            T1[0]=(Va);
+            T1[1]=(Vb);
+            T1[2]=(Vc);
         // second step and Third step:
 
             menor = T1[0];
@@ -383,7 +370,22 @@ __interrupt void adca_isr(){
          EPwm5Regs.CMPA.bit.CMPA =(uint16_t) Ton[1];
          EPwm6Regs.CMPA.bit.CMPA =(uint16_t) Ton[2];
 
-         //theta_ant=theta; //parte do integrador discreto
+
+         /*
+           if(index  == 200 )
+              index = 0;     //Limpa o Buffer.
+            else
+              index++;
+
+           //Gera Moduladora Senoidal .
+              w1 = (Uint16) (TB_Prd/2)*(1+Mi*__sin(__divf32(2*pi,NOS) * (float) index   ));
+              w2 = (Uint16) (TB_Prd/2)*(1+Mi*__sin(__divf32(2*pi,NOS) * (float) index - 2*pi/3));
+              w3 = (Uint16) (TB_Prd/2)*(1+Mi*__sin(__divf32(2*pi,NOS) * (float) index - 4*pi/3));
+
+              EPwm4Regs.CMPA.bit.CMPA = w1;
+              EPwm5Regs.CMPA.bit.CMPA = w2;
+              EPwm6Regs.CMPA.bit.CMPA = w3;
+          */
 
         AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1;    // Limpa as FLAGS provinientes do Trigger.
         PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;  //
