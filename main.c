@@ -33,8 +33,7 @@
 //#pragma DATA_SECTION( buffer,"RAMGS0");
 
 #include "F28x_Project.h"
-#include "CONTROLE_DEFS.h"
-
+#include "Controle_DEFS.h"
 
 
 #define PORTADORA_FREQ 6000

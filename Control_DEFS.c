@@ -5,17 +5,17 @@
  *      Author: Auro Gabriel
  */
 
-#include "CONTROLE_DEFS.h"
+#include "Controle_DEFS.h"
 #include "F28x_Project.h"
 #include "F2837xD_i2c.h"
 void i2c_DspConfig(void){
 
     //##########__CONFIGURACAO Prescale I2C__#######################################################################
 
-        I2caRegs.I2CMDR.bit.IRS=0;        //Deixo o módulo desligado pra poder mudar os valores
+        I2caRegs.I2CMDR.bit.IRS=0;        //Deixo o mï¿½dulo desligado pra poder mudar os valores
         I2caRegs.I2CPSC.bit.IPSC=128   ; // 200M/128= 1 562 500 Hz
 
-        I2caRegs.I2CCLKH=16;       // divido pra dar a frequência de 98.16KHz -> No datasheet fala que o padrao e 100KHz, entao fe
+        I2caRegs.I2CCLKH=16;       // divido pra dar a frequï¿½ncia de 98.16KHz -> No datasheet fala que o padrao e 100KHz, entao fe
         I2caRegs.I2CCLKL=16;
         I2caRegs.I2CMDR.bit.IRS=1; //Ligo o modulo que agora aceita os valores de prescale
 
