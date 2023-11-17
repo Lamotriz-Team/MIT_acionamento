@@ -33,7 +33,7 @@
 //#pragma DATA_SECTION( buffer,"RAMGS0");
 
 #include "F28x_Project.h"
-#include "Controle_DEFS.h"
+#include "math.h"
 
 
 
@@ -332,9 +332,10 @@ __interrupt void adca_isr(){
 
 //##############################___Transformada Inversa Clarke-Park___#######################################################################################
 
-            Va = r2div3*(ref.Vd*cos_value - ref.Vq*sin_value);
-            Vb = r2_div2*(ref.Vd*sin_value + ref.Vq*cos_value) - Va*0.5;
-            Vc = -(Va + Vb);
+            Va = 1.22474487139*(ref.Vd*cos_value+ref.Vq*sin_value);
+            Vb = 1.22474487139*((0.866025403*ref.Vq-0.5*ref.Vd)*cos_value-(0.5*ref.Vq+0.866025403*ref.Vd)*sin_value);
+            Vc = 1.22474487139*((-0.5*ref.Vd-0.866025403*ref.Vq)*cos_value+(0.866025403*ref.Vd-0.5*ref.Vq)*sin_value);
+
 
         // first step
             T1[0]=(Va);
