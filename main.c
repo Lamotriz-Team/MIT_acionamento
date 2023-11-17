@@ -314,8 +314,8 @@ __interrupt void adca_isr(){
 
         // DacaRegs.DACVALS.all=(current_phase_1+23)*100;
 
-         read.id=(0.8165)*((current_phase_1-0.5*current_phase_2-0.5*current_phase_3)*cos_value+(current_phase_2-current_phase_3)*0.866*sin_value);
-         read.iq=(0.8165)*((current_phase_2-current_phase_3)*0.866*cos_value+(current_phase_2+0.5*current_phase_3-current_phase_1)*sin_value);
+         read.id=(0.81649658)*((current_phase_1-0.5*current_phase_2-0.5*current_phase_3)*cos_value+(current_phase_2-current_phase_3)*0.866025403*sin_value);
+         read.iq=(0.81649658)*((current_phase_2-current_phase_3)*0.866025403*cos_value+(current_phase_2+0.5*current_phase_3-current_phase_1)*sin_value);
 
         // DacaRegs.DACVALS.all=(read.id+12)*100;
 
